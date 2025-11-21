@@ -6,8 +6,8 @@ on:
       branches: ["*"]
       paths:
         - "ecli/**"
-        - "compiler/**"
-        - "wasm-rumtime/**"
+        - "compiler/**"  # Ensure ecc and ecli releasing at same time
+        - "wasm-rumtime/**"  # Release when dependencies updated
         - "third_party/**"
         - "bpf-loader-rs/**"
         - "eunomia-sdk/**"
@@ -72,18 +72,18 @@ jobs:
         platform:
           - name: aarch64
             vmlinux_dir: arm64
-            rust_target: aarch64-unknown-linux-musl
-            cross_compiler_package: gcc-aarch64-linux-gnu
-            cross_compiler: aarch64-linux-gnu-gcc
+            rust_target: aarch64-unknown-linux-gnu
+            linker_specifier: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+            appimage_runtime: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-aarch64
             is_cross: true
-            test_env: ubuntu22.04  # run-on-arch 支持的最新版本
-            build_env: ubuntu22.04
+            cross_compiler_package: gcc-aarch64-linux-gnu
+            cross_compiler_executable: aarch64-linux-gnu-gcc
           - name: x86_64
             vmlinux_dir: x86
-            rust_target: x86_64-unknown-linux-musl
+            rust_target: x86_64-unknown-linux-gnu
+            linker_specifier: 
+            appimage_runtime: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-x86_64
             is_cross: false
-            test_env: ubuntu:24.04
-            build_env: ubuntu:24.04
     name: Build ecc on ${{matrix.platform.name}}
     runs-on: ubuntu-latest
     steps:
@@ -91,19 +91,14 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: 'recursive'
-      
-      - name: Install musl tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-      
       - name: Install dependencies for cross building
         if: matrix.platform.is_cross
         run: |
+          sudo apt-get update
           sudo apt-get install -y ${{matrix.platform.cross_compiler_package}}
-          ${{matrix.platform.cross_compiler}} --version
-      
+          ${{matrix.platform.cross_compiler_executable}} --version
       - name: Prepare bpftool and vmlinux repo for building workspace
+        # Move more steps outside of the virtual machine
         run: |
           mkdir workspace
           mkdir assets
@@ -111,153 +106,182 @@ jobs:
           git clone --recursive https://github.com/eunomia-bpf/vmlinux
           cd vmlinux
           git checkout 933f83b
+          # Avoid symlink issues
           rm vmlinux.h
           cd ..
           git clone --recursive https://github.com/eunomia-bpf/bpftool
-      
+          cd bpftool
+          # git checkout 0594034
       - name: Build workspace in docker
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
-          image: ${{matrix.platform.build_env}}
+          image: ubuntu:22.04
           run: |
-            set -e
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
-            cd /workspace && mkdir -p bin
+            cd /workspace && mkdir bin
             cd /assets/bpftool/src
-            CFLAGS="-static" make -j$(nproc)
-            ls -la bpftool
-            cp bpftool /workspace/bin/
-            ls -la /workspace/bin/
+            CFLAGS="-static" make
+            cp bpftool /workspace/bin
           options: |
             --volume ${{github.workspace}}/workspace:/workspace
             --volume ${{github.workspace}}/assets:/assets
-      
       - name: Build workspace in ${{matrix.platform.name}} virtual machine
         uses: uraimo/run-on-arch-action@v2
         if: matrix.platform.is_cross
         with: 
           arch: ${{matrix.platform.name}}
-          distro: ${{matrix.platform.build_env}}
+          distro: ubuntu22.04
           run: |
-            set -e
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
-            cd /workspace && mkdir -p bin
+            cd /workspace && mkdir bin
             cd /assets/bpftool/src
-            CFLAGS="-static" make -j$(nproc)
-            ls -la bpftool
-            cp bpftool /workspace/bin/
-            ls -la /workspace/bin/
+            CFLAGS="-static" make
+            cp bpftool /workspace/bin
           dockerRunArgs: |
             --volume "${PWD}/workspace:/workspace"
             --volume "${PWD}/assets:/assets"
-      
       - name: Compose the ecc workspace
         run: |
           sudo chmod 777 workspace -R
           sudo chown `whoami` workspace -R
           cd workspace
-          ls -la bin/
           mkdir include
           cp -r ../assets/bpftool/src/libbpf/include/bpf include/
           cp -r ../assets/vmlinux/ include/
           cp ./include/vmlinux/${{matrix.platform.vmlinux_dir}}/vmlinux.h ./include/vmlinux
-      
-      - name: Build ecc for ${{matrix.platform.rust_target}} (static musl)
+      - name: Build ecc for ${{matrix.platform.rust_target}}
         run: |
           rustup target add ${{matrix.platform.rust_target}}
           export ECC_CUSTOM_WORKSPACE_ROOT=$(pwd)/workspace
           echo "Workspace dir: $ECC_CUSTOM_WORKSPACE_ROOT"
           cd compiler/cmd
-          if [ "${{matrix.platform.is_cross}}" = "true" ]; then
-            export CARGO_TARGET_$(echo ${{matrix.platform.rust_target}} | tr '[:lower:]' '[:upper:]' | tr '-' '_')_LINKER=${{matrix.platform.cross_compiler}}
-          fi
           cargo build --release --target ${{matrix.platform.rust_target}}
           cd ../..
-          mkdir -p output
-          cp ./compiler/cmd/target/${{matrix.platform.rust_target}}/release/ecc-rs output/ecc-${{matrix.platform.name}}
-          chmod +x output/ecc-${{matrix.platform.name}}
-          # Verify it's statically linked
-          file output/ecc-${{matrix.platform.name}}
-          ldd output/ecc-${{matrix.platform.name}} 2>&1 || echo "Static binary confirmed"
-      
-      - uses: actions/upload-artifact@v4
+          mkdir data
+          cp ./compiler/cmd/target/${{matrix.platform.rust_target}}/release/ecc-rs data/ecc
+          cp ./.github/scripts/copy-libs.sh ./data
+          ls -lah data
+      # Necessary if we want to run things cross platform
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v2
+      - name: Run ecc-rs and retrive what libraries it loaded (cross)
+        uses: uraimo/run-on-arch-action@v2
+        if: matrix.platform.is_cross
+        with: 
+          arch: ${{matrix.platform.name}}
+          distro: ubuntu22.04
+          run: |
+            apt-get update
+            apt-get install -y libclang1
+            echo "Installation done"
+            echo "Working directory $(pwd)"
+            chmod +x /data/ecc
+            echo "Permission set done"
+            chmod +x /data/copy-libs.sh
+            /data/copy-libs.sh /data/ecc
+          dockerRunArgs: |
+            --volume "${PWD}/data:/data"
+          shell: /bin/bash
+      - name: Run ecc-rs and retrive what libraries it loaded (native)
+        uses: addnab/docker-run-action@v3
+        if: "!matrix.platform.is_cross"
+        with: 
+          image: ubuntu:22.04
+          run: |
+            apt-get update
+            apt-get install -y libclang1
+            echo "Installation done"
+            echo "Working directory $(pwd)"
+            chmod +x /data/ecc
+            echo "Permission set done"
+            chmod +x /data/copy-libs.sh
+            /data/copy-libs.sh /data/ecc
+          options: |
+            --volume ${{github.workspace}}/data:/data
+      - name: Show what libraries were copied
+        run: |
+          sudo chmod 777 ./data -R
+          sudo chown $(whoami) ./data -R
+          find ./data/libs -type f
+      - name: Prepare runtime file and cargo-appimage tool
+        uses: eunomia-bpf/prepare-cargo-appimage@v6
+        with: 
+          runtime-url: ${{matrix.platform.appimage_runtime}}
+      - name: Install libfuse for appimagetool
+        run: |
+          sudo apt-get update
+          sudo apt-get install libfuse2
+      - name: Clone and install cargo-appimage with ${{matrix.platform.name}} launcher
+        run: |
+          git clone https://github.com/eunomia-bpf/cargo-appimage
+          cd cargo-appimage
+          ${{matrix.platform.linker_specifier}} RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target ${{matrix.platform.rust_target}}
+      - name: Compose files and pack them
+        run: |
+          mkdir appimage-root
+          cd appimage-root
+          cp -r ../data/libs/* .
+          mkdir -p usr/bin
+          cp ../data/ecc usr/bin/bin
+          touch icon.png
+          cp ../cargo-appimage/target/${{matrix.platform.rust_target}}/release/cargo-appimage-runner AppRun
+          cp ../.github/scripts/cargo-appimage.desktop .
+          ../appimagetool --runtime-file ../runtime . ../ecc-${{matrix.platform.name}}
+      - uses: actions/upload-artifact@v3
         name: Upload build result
         with:
           name: ecc-${{matrix.platform.name}}
-          path: output/ecc-${{matrix.platform.name}}
-      
+          path: ecc-${{matrix.platform.name}}
       - if: matrix.platform.is_cross
+        # qemu-user doesn't seem to handle statically linked binaries well
         continue-on-error: true
         name: Test the binary in a new environment (cross)
         uses: uraimo/run-on-arch-action@v2
         with: 
           arch: ${{matrix.platform.name}}
-          distro: ${{matrix.platform.test_env}}
+          distro: ubuntu18.04
           run: |
             apt-get update
-            apt-get install -y clang llvm libclang-dev
-            # 查找 libclang 路径
-            LIBCLANG_PATH=$(find /usr/lib -name "libclang.so*" 2>/dev/null | head -n 1 | xargs dirname)
-            export LIBCLANG_PATH
-            export LD_LIBRARY_PATH=$LIBCLANG_PATH:$LD_LIBRARY_PATH
-            # 查找 llvm-strip
-            LLVM_STRIP=$(which llvm-strip 2>/dev/null)
+            apt-get install -y clang llvm-9
             cd /data
             chmod +x ecc-${{matrix.platform.name}}
-            if [ -n "$LLVM_STRIP" ]; then
-              ./ecc-${{matrix.platform.name}} -l "$LLVM_STRIP" .github/assets/simple.bpf.c
-            else
-              ./ecc-${{matrix.platform.name}} .github/assets/simple.bpf.c
-            fi
+            ./ecc-${{matrix.platform.name}} -l llvm-strip-9 .github/assets/simple.bpf.c
           dockerRunArgs: |
-            --volume "${PWD}/output:/data" --privileged
-      
+            --volume "${PWD}:/data" --privileged
       - name: Test the binary in a new environment (native)
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
-          image: ${{matrix.platform.test_env}}
+          image: ubuntu:18.04
           run: |
             apt-get update
-            apt-get install -y clang llvm libclang-dev
-            # 查找 libclang 路径
-            LIBCLANG_PATH=$(find /usr/lib -name "libclang.so*" 2>/dev/null | head -n 1 | xargs dirname)
-            export LIBCLANG_PATH
-            export LD_LIBRARY_PATH=$LIBCLANG_PATH:$LD_LIBRARY_PATH
-            # 查找 llvm-strip
-            LLVM_STRIP=$(which llvm-strip 2>/dev/null)
+            apt-get install -y clang llvm-9
             cd /data
             chmod +x ecc-${{matrix.platform.name}}
-            if [ -n "$LLVM_STRIP" ]; then
-              ./ecc-${{matrix.platform.name}} -l "$LLVM_STRIP" .github/assets/simple.bpf.c
-            else
-              ./ecc-${{matrix.platform.name}} .github/assets/simple.bpf.c
-            fi
+            ./ecc-${{matrix.platform.name}} -l llvm-strip-9 .github/assets/simple.bpf.c
           options: |
-            --volume ${{github.workspace}}/output:/data --privileged
+            --volume ${{github.workspace}}:/data --privileged
 
   release:
     needs: [create-release-version, build-ecc-binary]
     runs-on: ubuntu-latest
     steps:
       - name: Download build results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v3
         with:
           path: results
-      
       - name: List build results
         run: |
           find ./results -type f
-      
       - name: Copy ecc binary x86_64 to ecc
         run: |
           cp ./results/ecc-x86_64/ecc-x86_64 ./results/ecc-x86_64/ecc
-      
       - name: Publish
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository_owner == 'eunomia-bpf'
+        if:   github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository_owner == 'eunomia-bpf'
         uses: softprops/action-gh-release@v1
         with:
             files: |
@@ -269,3 +293,5 @@ jobs:
             generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    
