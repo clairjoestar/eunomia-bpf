@@ -125,10 +125,11 @@ jobs:
         run: |
           apt-get update
           apt-get install -y zlib1g-dev libelf-dev gcc make
-          cd workspace && mkdir bin
-          cd ../assets/bpftool/src
+          mkdir -p workspace/bin
+          cd assets/bpftool/src
           CFLAGS="-static" make
-          cp bpftool ../../workspace/bin
+          cp bpftool ../../../workspace/bin/
+          ls -lah ../../../workspace/bin/
       - name: Build workspace in ${{matrix.platform.name}} virtual machine
         uses: uraimo/run-on-arch-action@v2
         if: matrix.platform.is_cross
@@ -138,20 +139,23 @@ jobs:
           run: |
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
-            cd /workspace && mkdir bin
+            mkdir -p /workspace/bin
             cd /assets/bpftool/src
             CFLAGS="-static" make
-            cp bpftool /workspace/bin
+            cp bpftool /workspace/bin/
+            ls -lah /workspace/bin/
           dockerRunArgs: |
             --volume "${PWD}/workspace:/workspace"
             --volume "${PWD}/assets:/assets"
       - name: Compose the ecc workspace
         run: |
           cd workspace
-          mkdir include
+          mkdir -p include
           cp -r ../assets/bpftool/src/libbpf/include/bpf include/
           cp -r ../assets/vmlinux/ include/
           cp ./include/vmlinux/${{matrix.platform.vmlinux_dir}}/vmlinux.h ./include/vmlinux
+          ls -lah .
+          ls -lah bin/
       - name: Build ecc for ${{matrix.platform.rust_target}}
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
