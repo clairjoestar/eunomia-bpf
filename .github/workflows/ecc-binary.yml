@@ -76,12 +76,14 @@ jobs:
             cross_compiler_package: gcc-aarch64-linux-gnu
             cross_compiler: aarch64-linux-gnu-gcc
             is_cross: true
-            test_env: ubuntu24.04
+            test_env: ubuntu22.04  # run-on-arch 支持的最新版本
+            build_env: ubuntu22.04
           - name: x86_64
             vmlinux_dir: x86
             rust_target: x86_64-unknown-linux-musl
             is_cross: false
             test_env: ubuntu:24.04
+            build_env: ubuntu:24.04
     name: Build ecc on ${{matrix.platform.name}}
     runs-on: ubuntu-latest
     steps:
@@ -117,14 +119,17 @@ jobs:
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
-          image: ubuntu:24.04
+          image: ${{matrix.platform.build_env}}
           run: |
+            set -e
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
-            cd /workspace && mkdir bin
+            cd /workspace && mkdir -p bin
             cd /assets/bpftool/src
-            CFLAGS="-static" make
-            cp bpftool /workspace/bin
+            CFLAGS="-static" make -j$(nproc)
+            ls -la bpftool
+            cp bpftool /workspace/bin/
+            ls -la /workspace/bin/
           options: |
             --volume ${{github.workspace}}/workspace:/workspace
             --volume ${{github.workspace}}/assets:/assets
@@ -134,14 +139,17 @@ jobs:
         if: matrix.platform.is_cross
         with: 
           arch: ${{matrix.platform.name}}
-          distro: ubuntu24.04
+          distro: ${{matrix.platform.build_env}}
           run: |
+            set -e
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
-            cd /workspace && mkdir bin
+            cd /workspace && mkdir -p bin
             cd /assets/bpftool/src
-            CFLAGS="-static" make
-            cp bpftool /workspace/bin
+            CFLAGS="-static" make -j$(nproc)
+            ls -la bpftool
+            cp bpftool /workspace/bin/
+            ls -la /workspace/bin/
           dockerRunArgs: |
             --volume "${PWD}/workspace:/workspace"
             --volume "${PWD}/assets:/assets"
@@ -151,6 +159,7 @@ jobs:
           sudo chmod 777 workspace -R
           sudo chown `whoami` workspace -R
           cd workspace
+          ls -la bin/
           mkdir include
           cp -r ../assets/bpftool/src/libbpf/include/bpf include/
           cp -r ../assets/vmlinux/ include/
