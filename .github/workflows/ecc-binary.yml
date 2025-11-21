@@ -78,14 +78,12 @@ jobs:
             is_cross: true
             cross_compiler_package: gcc-aarch64-linux-gnu
             cross_compiler_executable: aarch64-linux-gnu-gcc
-            ld_linux_pattern: "ld-linux-aarch64.so*"
           - name: x86_64
             vmlinux_dir: x86
             rust_target: x86_64-unknown-linux-gnu
             linker_specifier: 
             appimage_runtime: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-x86_64
             is_cross: false
-            ld_linux_pattern: "ld-linux-x86-64.so*"
     name: Build ecc on ${{matrix.platform.name}}
     runs-on: ubuntu-latest
     steps:
@@ -179,9 +177,16 @@ jobs:
             chmod +x /data/ecc
             mkdir -p /data/libs
             
-            echo "=== Copying dynamic linker ==="
-            find /lib -name '${{matrix.platform.ld_linux_pattern}}' -exec cp -v {} /data/libs/ \;
-            find /lib64 -name '${{matrix.platform.ld_linux_pattern}}' -exec cp -v {} /data/libs/ \; 2>/dev/null || true
+            echo "=== Finding and copying dynamic linker ==="
+            # For aarch64
+            if [ -f /lib/ld-linux-aarch64.so.1 ]; then
+              cp -v /lib/ld-linux-aarch64.so.1 /data/libs/
+            fi
+            # Fallback: search for any ld-linux files
+            find /lib /lib64 -name "ld-linux*" -type f 2>/dev/null | while read f; do
+              echo "Found linker: $f"
+              cp -v "$f" /data/libs/
+            done
             
             echo "=== Copying shared libraries ==="
             for lib in $(ldd /data/ecc 2>/dev/null | grep "=> /" | awk '{print $3}'); do
@@ -209,9 +214,19 @@ jobs:
             chmod +x /data/ecc
             mkdir -p /data/libs
             
-            echo "=== Copying dynamic linker ==="
-            find /lib -name '${{matrix.platform.ld_linux_pattern}}' -exec cp -v {} /data/libs/ \;
-            find /lib64 -name '${{matrix.platform.ld_linux_pattern}}' -exec cp -v {} /data/libs/ \; 2>/dev/null || true
+            echo "=== Finding and copying dynamic linker ==="
+            # For x86_64
+            if [ -f /lib64/ld-linux-x86-64.so.2 ]; then
+              cp -v /lib64/ld-linux-x86-64.so.2 /data/libs/
+            fi
+            if [ -f /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 ]; then
+              cp -v /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 /data/libs/
+            fi
+            # Fallback: search for any ld-linux files
+            find /lib /lib64 -name "ld-linux*" -type f 2>/dev/null | while read f; do
+              echo "Found linker: $f"
+              cp -v "$f" /data/libs/
+            done
             
             echo "=== Copying shared libraries ==="
             for lib in $(ldd /data/ecc 2>/dev/null | grep "=> /" | awk '{print $3}'); do
