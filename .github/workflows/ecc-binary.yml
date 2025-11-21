@@ -256,7 +256,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
-          image: ubuntu:18.04
+          image: ubuntu:22.04
           run: |
             apt-get update
             apt-get install -y clang llvm-9 libclang1
