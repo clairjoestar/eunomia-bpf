@@ -84,22 +84,40 @@ jobs:
             is_cross: false
             test_env: ubuntu:18.04
     name: Build ecc on ${{matrix.platform.name}}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
+    container:
+      image: ubuntu:20.04
+      options: --privileged
     steps:
+      - name: Prepare container environment
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates curl gnupg git sudo
+          
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           submodules: 'recursive'
       
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          
+      - name: Setup Rust environment
+        run: |
+          . $HOME/.cargo/env
+          rustup default stable
+          rustup target add ${{matrix.platform.rust_target}}
+      
       - name: Install LLVM and Clang for bindgen
         run: |
-          sudo apt-get update
-          sudo apt-get install -y llvm-14 libclang-14-dev clang-14
+          apt-get install -y llvm-10 libclang-10-dev clang-10
       
       - name: Install dependencies for cross building
         if: matrix.platform.is_cross
         run: |
-          sudo apt-get install -y ${{matrix.platform.cross_compiler_package}}
+          apt-get install -y ${{matrix.platform.cross_compiler_package}}
           ${{matrix.platform.cross_compiler}} --version
       
       - name: Prepare bpftool and vmlinux repo for building workspace
@@ -118,7 +136,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
-          image: ubuntu:22.04
+          image: ubuntu:20.04
           run: |
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
@@ -135,7 +153,7 @@ jobs:
         if: matrix.platform.is_cross
         with: 
           arch: ${{matrix.platform.name}}
-          distro: ubuntu22.04
+          distro: ubuntu20.04
           run: |
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
@@ -149,8 +167,8 @@ jobs:
       
       - name: Compose the ecc workspace
         run: |
-          sudo chmod 777 workspace -R
-          sudo chown `whoami` workspace -R
+          chmod 777 workspace -R
+          chown `whoami` workspace -R
           cd workspace
           mkdir include
           cp -r ../assets/bpftool/src/libbpf/include/bpf include/
@@ -159,10 +177,10 @@ jobs:
       
       - name: Build ecc for ${{matrix.platform.rust_target}}
         run: |
-          rustup target add ${{matrix.platform.rust_target}}
+          . $HOME/.cargo/env
           export ECC_CUSTOM_WORKSPACE_ROOT=$(pwd)/workspace
-          export LIBCLANG_PATH=/usr/lib/llvm-14/lib
-          export LLVM_CONFIG_PATH=/usr/bin/llvm-config-14
+          export LIBCLANG_PATH=/usr/lib/llvm-10/lib
+          export LLVM_CONFIG_PATH=/usr/bin/llvm-config-10
           echo "Workspace dir: $ECC_CUSTOM_WORKSPACE_ROOT"
           cd compiler/cmd
           if [ "${{matrix.platform.is_cross}}" = "true" ]; then
@@ -173,6 +191,13 @@ jobs:
           mkdir -p output
           cp ./compiler/cmd/target/${{matrix.platform.rust_target}}/release/ecc-rs output/ecc-${{matrix.platform.name}}
           chmod +x output/ecc-${{matrix.platform.name}}
+      
+      - name: Verify glibc version requirement
+        run: |
+          if [ "${{matrix.platform.is_cross}}" = "false" ]; then
+            apt-get install -y patchelf
+            objdump -T output/ecc-${{matrix.platform.name}} | grep GLIBC_ | sed 's/.*GLIBC_\([.0-9]*\).*/\1/g' | sort -Vu | tail -1
+          fi
       
       - name: Strip the binary
         run: |
