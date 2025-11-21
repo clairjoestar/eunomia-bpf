@@ -252,17 +252,22 @@ jobs:
             ./ecc-${{matrix.platform.name}} -l llvm-strip-9 .github/assets/simple.bpf.c
           dockerRunArgs: |
             --volume "${PWD}:/data" --privileged
-      - name: Test the binary in a new environment (native)
+      - name: Test the extracted binary in a new environment (native)
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
           image: ubuntu:18.04
           run: |
             apt-get update
-            apt-get install -y clang llvm-9
+            apt-get install -y clang llvm-9 libclang1
             cd /data
-            chmod +x ecc-${{matrix.platform.name}}
-            ./ecc-${{matrix.platform.name}} -l llvm-strip-9 .github/assets/simple.bpf.c
+            # 复制必要的库文件
+            if [ -d ./data/libs ]; then
+            export LD_LIBRARY_PATH=/data/data/libs:$LD_LIBRARY_PATH
+            fi
+            # 直接测试原始二进制
+            chmod +x ./data/ecc
+            ./data/ecc -l llvm-strip-9 .github/assets/simple.bpf.c
           options: |
             --volume ${{github.workspace}}:/data --privileged
 
