@@ -212,10 +212,6 @@ jobs:
         uses: eunomia-bpf/prepare-cargo-appimage@v6
         with: 
           runtime-url: ${{matrix.platform.appimage_runtime}}
-      - name: Install libfuse for appimagetool
-        run: |
-          apt-get update
-          apt-get install -y libfuse2
       - name: Clone and install cargo-appimage with ${{matrix.platform.name}} launcher
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
@@ -224,20 +220,24 @@ jobs:
           ${{matrix.platform.linker_specifier}} RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target ${{matrix.platform.rust_target}}
       - name: Compose files and pack them
         run: |
-          mkdir appimage-root
-          cd appimage-root
-          cp -r ../data/copy-libs.sh .
-          mkdir -p usr/bin
-          cp ../data/ecc usr/bin/bin
+          mkdir -p appimage-root/usr/bin
+          mkdir -p appimage-root/usr/lib
+          cp ./data/ecc appimage-root/usr/bin/bin
           # Copy libraries if they exist
-          if [ -d ../data/libs ]; then
-            mkdir -p usr/lib
-            cp -r ../data/libs/* usr/lib/
+          if [ -d ./data/libs ]; then
+            cp -r ./data/libs/* appimage-root/usr/lib/
           fi
-          touch icon.png
-          cp ../cargo-appimage/target/${{matrix.platform.rust_target}}/release/cargo-appimage-runner AppRun
-          cp ../.github/scripts/cargo-appimage.desktop .
-          ../appimagetool --runtime-file ../runtime . ../ecc-${{matrix.platform.name}}
+          touch appimage-root/icon.png
+          cp ./cargo-appimage/target/${{matrix.platform.rust_target}}/release/cargo-appimage-runner appimage-root/AppRun
+          cp ./.github/scripts/cargo-appimage.desktop appimage-root/
+          # Download appimagetool
+          apt-get update && apt-get install -y wget file
+          wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          # Extract appimagetool to avoid FUSE issues
+          ./appimagetool-x86_64.AppImage --appimage-extract
+          # Use extracted appimagetool with --no-appimage option
+          ARCH=${{matrix.platform.name}} ./squashfs-root/AppRun --runtime-file ./runtime appimage-root ecc-${{matrix.platform.name}}
       - uses: actions/upload-artifact@v4
         name: Upload build result
         with:
