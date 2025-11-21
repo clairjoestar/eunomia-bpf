@@ -76,12 +76,12 @@ jobs:
             cross_compiler_package: gcc-aarch64-linux-gnu
             cross_compiler: aarch64-linux-gnu-gcc
             is_cross: true
-            test_env: ubuntu18.04
+            test_env: ubuntu24.04
           - name: x86_64
             vmlinux_dir: x86
             rust_target: x86_64-unknown-linux-musl
             is_cross: false
-            test_env: ubuntu:20.04
+            test_env: ubuntu:24.04
     name: Build ecc on ${{matrix.platform.name}}
     runs-on: ubuntu-latest
     steps:
@@ -117,7 +117,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
-          image: ubuntu:22.04
+          image: ubuntu:24.04
           run: |
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
@@ -134,7 +134,7 @@ jobs:
         if: matrix.platform.is_cross
         with: 
           arch: ${{matrix.platform.name}}
-          distro: ubuntu22.04
+          distro: ubuntu24.04
           run: |
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
@@ -189,10 +189,20 @@ jobs:
           distro: ${{matrix.platform.test_env}}
           run: |
             apt-get update
-            apt-get install -y clang llvm-9
+            apt-get install -y clang llvm libclang-dev
+            # 查找 libclang 路径
+            LIBCLANG_PATH=$(find /usr/lib -name "libclang.so*" 2>/dev/null | head -n 1 | xargs dirname)
+            export LIBCLANG_PATH
+            export LD_LIBRARY_PATH=$LIBCLANG_PATH:$LD_LIBRARY_PATH
+            # 查找 llvm-strip
+            LLVM_STRIP=$(which llvm-strip 2>/dev/null)
             cd /data
             chmod +x ecc-${{matrix.platform.name}}
-            ./ecc-${{matrix.platform.name}} -l llvm-strip-9 .github/assets/simple.bpf.c
+            if [ -n "$LLVM_STRIP" ]; then
+              ./ecc-${{matrix.platform.name}} -l "$LLVM_STRIP" .github/assets/simple.bpf.c
+            else
+              ./ecc-${{matrix.platform.name}} .github/assets/simple.bpf.c
+            fi
           dockerRunArgs: |
             --volume "${PWD}/output:/data" --privileged
       
@@ -203,10 +213,20 @@ jobs:
           image: ${{matrix.platform.test_env}}
           run: |
             apt-get update
-            apt-get install -y libclang-9-dev clang llvm-9
+            apt-get install -y clang llvm libclang-dev
+            # 查找 libclang 路径
+            LIBCLANG_PATH=$(find /usr/lib -name "libclang.so*" 2>/dev/null | head -n 1 | xargs dirname)
+            export LIBCLANG_PATH
+            export LD_LIBRARY_PATH=$LIBCLANG_PATH:$LD_LIBRARY_PATH
+            # 查找 llvm-strip
+            LLVM_STRIP=$(which llvm-strip 2>/dev/null)
             cd /data
             chmod +x ecc-${{matrix.platform.name}}
-            ./ecc-${{matrix.platform.name}} -l llvm-strip-9 .github/assets/simple.bpf.c
+            if [ -n "$LLVM_STRIP" ]; then
+              ./ecc-${{matrix.platform.name}} -l "$LLVM_STRIP" .github/assets/simple.bpf.c
+            else
+              ./ecc-${{matrix.platform.name}} .github/assets/simple.bpf.c
+            fi
           options: |
             --volume ${{github.workspace}}/output:/data --privileged
 
