@@ -203,7 +203,7 @@ jobs:
           image: ${{matrix.platform.test_env}}
           run: |
             apt-get update
-            apt-get install -y clang llvm-9
+            apt-get install -y libclang-9-dev clang llvm-9
             cd /data
             chmod +x ecc-${{matrix.platform.name}}
             ./ecc-${{matrix.platform.name}} -l llvm-strip-9 .github/assets/simple.bpf.c
