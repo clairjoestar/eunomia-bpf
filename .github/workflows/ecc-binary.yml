@@ -206,7 +206,7 @@ jobs:
         run: |
           sudo chmod 777 ./data -R
           sudo chown $(whoami) ./data -R
-          find ./data/libs -type f
+          find ./data/copy-libs.sh -type f
       - name: Prepare runtime file and cargo-appimage tool
         uses: eunomia-bpf/prepare-cargo-appimage@v6
         with: 
