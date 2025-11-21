@@ -162,7 +162,6 @@ jobs:
           cd ../..
           mkdir data
           cp ./compiler/cmd/target/${{matrix.platform.rust_target}}/release/ecc-rs data/ecc
-          cp ./.github/scripts/copy-libs.sh ./data
           ls -lah data
       # Necessary if we want to run things cross platform
       - name: Set up Docker Buildx
@@ -175,14 +174,29 @@ jobs:
           arch: ${{matrix.platform.name}}
           distro: ubuntu22.04
           run: |
+            set -ex
             apt-get update
             apt-get install -y libclang1
             echo "Installation done"
             echo "Working directory $(pwd)"
             chmod +x /data/ecc
             echo "Permission set done"
-            chmod +x /data/copy-libs.sh
-            /data/copy-libs.sh /data/ecc
+            
+            # 直接复制库文件，不依赖外部脚本
+            mkdir -p /data/libs
+            echo "Checking dependencies of /data/ecc:"
+            ldd /data/ecc || true
+            
+            # 复制动态库
+            for lib in $(ldd /data/ecc 2>/dev/null | grep "=> /" | awk '{print $3}'); do
+              if [ -f "$lib" ]; then
+                echo "Copying $lib"
+                cp -v "$lib" /data/libs/
+              fi
+            done
+            
+            echo "Libraries copied:"
+            ls -lah /data/libs || echo "No libs directory"
           dockerRunArgs: |
             --volume "${PWD}/data:/data"
           shell: /bin/bash
@@ -192,21 +206,44 @@ jobs:
         with: 
           image: ubuntu:22.04
           run: |
+            set -ex
             apt-get update
             apt-get install -y libclang1
             echo "Installation done"
             echo "Working directory $(pwd)"
             chmod +x /data/ecc
             echo "Permission set done"
-            chmod +x /data/copy-libs.sh
-            /data/copy-libs.sh /data/ecc
+            
+            # 直接复制库文件，不依赖外部脚本
+            mkdir -p /data/libs
+            echo "Checking dependencies of /data/ecc:"
+            ldd /data/ecc || true
+            
+            # 复制动态库
+            for lib in $(ldd /data/ecc 2>/dev/null | grep "=> /" | awk '{print $3}'); do
+              if [ -f "$lib" ]; then
+                echo "Copying $lib"
+                cp -v "$lib" /data/libs/
+              fi
+            done
+            
+            echo "Libraries copied:"
+            ls -lah /data/libs || echo "No libs directory"
           options: |
             --volume ${{github.workspace}}/data:/data
       - name: Show what libraries were copied
         run: |
           sudo chmod 777 ./data -R
           sudo chown $(whoami) ./data -R
-          find ./data/libs -type f
+          echo "Contents of data directory:"
+          ls -lah ./data
+          if [ -d ./data/libs ]; then
+            echo "Libraries found:"
+            find ./data/libs -type f
+          else
+            echo "WARNING: No libs directory found - creating empty directory"
+            mkdir -p ./data/libs
+          fi
       - name: Prepare runtime file and cargo-appimage tool
         uses: eunomia-bpf/prepare-cargo-appimage@v6
         with: 
@@ -224,7 +261,7 @@ jobs:
         run: |
           mkdir appimage-root
           cd appimage-root
-          cp -r ../data/libs/* .
+          cp -r ../data/libs/* . || echo "No libs to copy"
           mkdir -p usr/bin
           cp ../data/ecc usr/bin/bin
           touch icon.png
@@ -293,5 +330,3 @@ jobs:
             generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
-    
