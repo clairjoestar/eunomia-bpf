@@ -119,10 +119,10 @@ jobs:
           image: ubuntu:24.04
           run: |
             apt-get update
-            apt-get install -y zlib1g-dev libelf-dev gcc make
+            apt-get install -y zlib1g-dev libelf-dev libzstd-dev gcc make
             cd /workspace && mkdir bin
             cd /assets/bpftool/src
-            CFLAGS="-static" make
+            CFLAGS="-static" LDFLAGS="-static" EXTRA_LDFLAGS="-lzstd" make
             cp bpftool /workspace/bin
           options: |
             --volume ${{github.workspace}}/workspace:/workspace
@@ -135,10 +135,10 @@ jobs:
           distro: ubuntu24.04
           run: |
             apt-get update
-            apt-get install -y zlib1g-dev libelf-dev gcc make
+            apt-get install -y zlib1g-dev libelf-dev libzstd-dev gcc make
             cd /workspace && mkdir bin
             cd /assets/bpftool/src
-            CFLAGS="-static" make
+            CFLAGS="-static" LDFLAGS="-static" EXTRA_LDFLAGS="-lzstd" make
             cp bpftool /workspace/bin
           dockerRunArgs: |
             --volume "${PWD}/workspace:/workspace"
