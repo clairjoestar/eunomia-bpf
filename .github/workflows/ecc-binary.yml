@@ -72,18 +72,20 @@ jobs:
         platform:
           - name: aarch64
             vmlinux_dir: arm64
-            rust_target: aarch64-unknown-linux-gnu
-            linker_specifier: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+            rust_target: aarch64-unknown-linux-musl
+            linker_specifier: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
             appimage_runtime: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-aarch64
             is_cross: true
             cross_compiler_package: gcc-aarch64-linux-gnu
             cross_compiler_executable: aarch64-linux-gnu-gcc
+            test_env: ubuntu18.04
           - name: x86_64
             vmlinux_dir: x86
-            rust_target: x86_64-unknown-linux-gnu
+            rust_target: x86_64-unknown-linux-musl
             linker_specifier: 
             appimage_runtime: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-x86_64
             is_cross: false
+            test_env: ubuntu:18.04
     name: Build ecc on ${{matrix.platform.name}}
     runs-on: ubuntu-latest
     steps:
@@ -91,11 +93,15 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: 'recursive'
+      - name: Install musl tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
       - name: Install dependencies for cross building
         if: matrix.platform.is_cross
         run: |
           sudo apt-get update
-          sudo apt-get install -y ${{matrix.platform.cross_compiler_package}}
+          sudo apt-get install -y ${{matrix.platform.cross_compiler_package}} musl-tools
           ${{matrix.platform.cross_compiler_executable}} --version
       - name: Prepare bpftool and vmlinux repo for building workspace
         run: |
@@ -149,110 +155,20 @@ jobs:
           cp -r ../assets/bpftool/src/libbpf/include/bpf include/
           cp -r ../assets/vmlinux/ include/
           cp ./include/vmlinux/${{matrix.platform.vmlinux_dir}}/vmlinux.h ./include/vmlinux
-      - name: Build ecc for ${{matrix.platform.rust_target}}
+      - name: Build ecc for ${{matrix.platform.rust_target}} (static musl)
         run: |
           rustup target add ${{matrix.platform.rust_target}}
           export ECC_CUSTOM_WORKSPACE_ROOT=$(pwd)/workspace
           echo "Workspace dir: $ECC_CUSTOM_WORKSPACE_ROOT"
           cd compiler/cmd
-          cargo build --release --target ${{matrix.platform.rust_target}}
+          ${{matrix.platform.linker_specifier}} cargo build --release --target ${{matrix.platform.rust_target}}
           cd ../..
           mkdir data
           cp ./compiler/cmd/target/${{matrix.platform.rust_target}}/release/ecc-rs data/ecc
           ls -lah data
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v2
-      - name: Run ecc-rs and retrieve libraries (cross)
-        uses: uraimo/run-on-arch-action@v2
-        if: matrix.platform.is_cross
-        with: 
-          arch: ${{matrix.platform.name}}
-          distro: ubuntu22.04
-          run: |
-            set -ex
-            apt-get update
-            apt-get install -y libclang1
-            
-            chmod +x /data/ecc
-            mkdir -p /data/libs
-            
-            echo "=== Finding and copying dynamic linker ==="
-            # For aarch64
-            if [ -f /lib/ld-linux-aarch64.so.1 ]; then
-              cp -v /lib/ld-linux-aarch64.so.1 /data/libs/
-            fi
-            # Fallback: search for any ld-linux files
-            find /lib /lib64 -name "ld-linux*" -type f 2>/dev/null | while read f; do
-              echo "Found linker: $f"
-              cp -v "$f" /data/libs/
-            done
-            
-            echo "=== Copying shared libraries ==="
-            for lib in $(ldd /data/ecc 2>/dev/null | grep "=> /" | awk '{print $3}'); do
-              if [ -f "$lib" ]; then
-                echo "Copying $lib"
-                cp -v "$lib" /data/libs/
-              fi
-            done
-            
-            echo "=== Libraries copied ==="
-            ls -lah /data/libs
-          dockerRunArgs: |
-            --volume "${PWD}/data:/data"
-          shell: /bin/bash
-      - name: Run ecc-rs and retrieve libraries (native)
-        uses: addnab/docker-run-action@v3
-        if: "!matrix.platform.is_cross"
-        with: 
-          image: ubuntu:22.04
-          run: |
-            set -ex
-            apt-get update
-            apt-get install -y libclang1
-            
-            chmod +x /data/ecc
-            mkdir -p /data/libs
-            
-            echo "=== Finding and copying dynamic linker ==="
-            # For x86_64
-            if [ -f /lib64/ld-linux-x86-64.so.2 ]; then
-              cp -v /lib64/ld-linux-x86-64.so.2 /data/libs/
-            fi
-            if [ -f /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 ]; then
-              cp -v /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 /data/libs/
-            fi
-            # Fallback: search for any ld-linux files
-            find /lib /lib64 -name "ld-linux*" -type f 2>/dev/null | while read f; do
-              echo "Found linker: $f"
-              cp -v "$f" /data/libs/
-            done
-            
-            echo "=== Copying shared libraries ==="
-            for lib in $(ldd /data/ecc 2>/dev/null | grep "=> /" | awk '{print $3}'); do
-              if [ -f "$lib" ]; then
-                echo "Copying $lib"
-                cp -v "$lib" /data/libs/
-              fi
-            done
-            
-            echo "=== Libraries copied ==="
-            ls -lah /data/libs
-          options: |
-            --volume ${{github.workspace}}/data:/data
-      - name: Show what libraries were copied
-        run: |
-          sudo chmod 777 ./data -R
-          sudo chown $(whoami) ./data -R
-          echo "Contents of data directory:"
-          ls -lah ./data
-          if [ -d ./data/libs ]; then
-            echo "Libraries found:"
-            find ./data/libs -type f
-          else
-            echo "WARNING: No libs directory found"
-            exit 1
-          fi
+          # Verify it's statically linked
+          file data/ecc
+          ldd data/ecc || echo "Static binary - no dynamic dependencies"
       - name: Prepare runtime file and cargo-appimage tool
         uses: eunomia-bpf/prepare-cargo-appimage@v6
         with: 
@@ -270,7 +186,6 @@ jobs:
         run: |
           mkdir appimage-root
           cd appimage-root
-          cp -r ../data/libs/* .
           mkdir -p usr/bin
           cp ../data/ecc usr/bin/bin
           touch icon.png
@@ -288,7 +203,7 @@ jobs:
         uses: uraimo/run-on-arch-action@v2
         with: 
           arch: ${{matrix.platform.name}}
-          distro: ubuntu18.04
+          distro: ${{matrix.platform.test_env}}
           run: |
             apt-get update
             apt-get install -y clang llvm-9
@@ -301,7 +216,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
-          image: ubuntu:18.04
+          image: ${{matrix.platform.test_env}}
           run: |
             apt-get update
             apt-get install -y clang llvm-9
