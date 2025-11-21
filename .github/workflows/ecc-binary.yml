@@ -155,7 +155,7 @@ jobs:
       - name: Install libfuse for appimagetool
         run: |
           apt-get update
-          apt-get install -y libfuse2
+          apt-get install -y libfuse2 file
       - name: Clone and install cargo-appimage with x86_64 launcher
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
@@ -177,7 +177,9 @@ jobs:
           touch icon.png
           cp ../cargo-appimage/target/x86_64-unknown-linux-gnu/release/cargo-appimage-runner AppRun
           cp ../.github/scripts/cargo-appimage.desktop .
-          ../appimagetool --runtime-file ../runtime . ../ecc-x86_64
+          # Extract appimagetool to avoid FUSE issues
+          ../appimagetool --appimage-extract
+          ARCH=x86_64 ../squashfs-root/AppRun --no-appstream --runtime-file ../runtime . ../ecc-x86_64
       - uses: actions/upload-artifact@v4
         name: Upload build result
         with:
@@ -214,7 +216,7 @@ jobs:
       - name: Install dependencies for cross building
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y gcc-aarch64-linux-gnu file
           aarch64-linux-gnu-gcc --version
       - name: Prepare bpftool and vmlinux repo for building workspace
         run: |
@@ -234,15 +236,19 @@ jobs:
           arch: aarch64
           distro: ubuntu22.04
           githubToken: ${{ github.token }}
+          setup: |
+            mkdir -p "${PWD}/workspace/bin"
+          dockerRunArgs: |
+            --volume "${PWD}/assets:/assets"
+            --volume "${PWD}/workspace:/workspace"
           install: |
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
           run: |
-            mkdir -p workspace/bin
-            cd assets/bpftool/src
-            CFLAGS="-static" make
-            cp bpftool ../../../workspace/bin/
-            ls -lah ../../../workspace/bin/
+            cd /assets/bpftool/src
+            CFLAGS="-static" make -j$(nproc)
+            cp bpftool /workspace/bin/
+            ls -lah /workspace/bin/
       - name: Compose the ecc workspace
         run: |
           cd workspace
@@ -271,16 +277,17 @@ jobs:
           arch: aarch64
           distro: ubuntu22.04
           githubToken: ${{ github.token }}
+          dockerRunArgs: |
+            --volume "${PWD}/data:/data"
           install: |
             apt-get update
             apt-get install -y libclang1
           run: |
-            echo "Installation done"
             echo "Working directory $(pwd)"
-            chmod +x data/ecc
-            echo "Permission set done"
-            chmod +x data/copy-libs.sh
-            data/copy-libs.sh data/ecc
+            chmod +x /data/ecc
+            chmod +x /data/copy-libs.sh
+            cd /data
+            ./copy-libs.sh ./ecc
       - name: Show what libraries were copied
         run: |
           find ./data -type f
@@ -310,14 +317,12 @@ jobs:
           touch appimage-root/icon.png
           cp ./cargo-appimage/target/aarch64-unknown-linux-gnu/release/cargo-appimage-runner appimage-root/AppRun
           cp ./.github/scripts/cargo-appimage.desktop appimage-root/
-          # Download appimagetool
-          sudo apt-get update && sudo apt-get install -y wget file
-          wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          # Download and extract appimagetool
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool-x86_64.AppImage
-          # Extract appimagetool to avoid FUSE issues
-          ./appimagetool-x86_64.AppImage --appimage-extract
-          # Use extracted appimagetool
-          ARCH=aarch64 ./squashfs-root/AppRun --runtime-file ./runtime appimage-root ecc-aarch64
+          ./appimagetool-x86_64.AppImage --appimage-extract >/dev/null 2>&1
+          # Use extracted appimagetool to avoid FUSE issues
+          ARCH=aarch64 ./squashfs-root/AppRun --no-appstream --runtime-file ./runtime appimage-root ecc-aarch64
       - uses: actions/upload-artifact@v4
         name: Upload build result
         with:
@@ -330,16 +335,19 @@ jobs:
           arch: aarch64
           distro: ubuntu22.04
           githubToken: ${{ github.token }}
+          dockerRunArgs: |
+            --volume "${PWD}:/workspace"
           install: |
             apt-get update
             apt-get install -y clang llvm
           run: |
+            cd /workspace
             chmod +x ecc-aarch64
             mkdir -p /tmp/appimage-mount
             cd /tmp/appimage-mount
-            ${GITHUB_WORKSPACE}/ecc-aarch64 --appimage-extract >/dev/null 2>&1 || true
+            /workspace/ecc-aarch64 --appimage-extract >/dev/null 2>&1 || true
             if [ -f squashfs-root/usr/bin/bin ]; then
-              cd ${GITHUB_WORKSPACE}
+              cd /workspace
               export LD_LIBRARY_PATH=/tmp/appimage-mount/squashfs-root/usr/lib:$LD_LIBRARY_PATH
               /tmp/appimage-mount/squashfs-root/usr/bin/bin -l llvm-strip .github/assets/simple.bpf.c
             else
