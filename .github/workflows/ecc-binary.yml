@@ -65,26 +65,9 @@ jobs:
             const tag = tags.find(tag => tag.commit.sha === context.sha);
             
             return tag ? tag.name : increase_v(latest_release_tag)
-  build-ecc-binary:
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - name: aarch64
-            vmlinux_dir: arm64
-            rust_target: aarch64-unknown-linux-gnu
-            linker_specifier: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-            appimage_runtime: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-aarch64
-            is_cross: true
-            cross_compiler_package: gcc-aarch64-linux-gnu
-            cross_compiler_executable: aarch64-linux-gnu-gcc
-          - name: x86_64
-            vmlinux_dir: x86
-            rust_target: x86_64-unknown-linux-gnu
-            linker_specifier: 
-            appimage_runtime: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-x86_64
-            is_cross: false
-    name: Build ecc on ${{matrix.platform.name}}
+            
+  build-ecc-binary-x86:
+    name: Build ecc on x86_64
     runs-on: ubuntu-22.04
     container:
       image: ubuntu:22.04
@@ -101,12 +84,6 @@ jobs:
         uses: actions/checkout@v3
         with:
           submodules: 'recursive'
-      - name: Install dependencies for cross building
-        if: matrix.platform.is_cross
-        run: |
-          apt-get update
-          apt-get install -y ${{matrix.platform.cross_compiler_package}}
-          ${{matrix.platform.cross_compiler_executable}} --version
       - name: Prepare bpftool and vmlinux repo for building workspace
         run: |
           mkdir workspace
@@ -120,8 +97,7 @@ jobs:
           cd ..
           git clone --recursive https://github.com/eunomia-bpf/bpftool
           cd bpftool
-      - name: Build workspace (native)
-        if: "!matrix.platform.is_cross"
+      - name: Build workspace
         run: |
           apt-get update
           apt-get install -y zlib1g-dev libelf-dev gcc make
@@ -130,66 +106,32 @@ jobs:
           CFLAGS="-static" make
           cp bpftool ../../../workspace/bin/
           ls -lah ../../../workspace/bin/
-      - name: Build workspace in ${{matrix.platform.name}} virtual machine
-        uses: uraimo/run-on-arch-action@v2
-        if: matrix.platform.is_cross
-        with: 
-          arch: ${{matrix.platform.name}}
-          distro: ubuntu22.04
-          githubToken: ${{ github.token }}
-          install: |
-            apt-get update
-            apt-get install -y zlib1g-dev libelf-dev gcc make
-          run: |
-            mkdir -p workspace/bin
-            cd assets/bpftool/src
-            CFLAGS="-static" make
-            cp bpftool ../../../workspace/bin/
-            ls -lah ../../../workspace/bin/
       - name: Compose the ecc workspace
         run: |
           cd workspace
           mkdir -p include
           cp -r ../assets/bpftool/src/libbpf/include/bpf include/
           cp -r ../assets/vmlinux/ include/
-          cp ./include/vmlinux/${{matrix.platform.vmlinux_dir}}/vmlinux.h ./include/vmlinux
+          cp ./include/vmlinux/x86/vmlinux.h ./include/vmlinux
           ls -lah .
           ls -lah bin/
-      - name: Build ecc for ${{matrix.platform.rust_target}}
+      - name: Build ecc for x86_64-unknown-linux-gnu
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
-          rustup target add ${{matrix.platform.rust_target}}
+          rustup target add x86_64-unknown-linux-gnu
           export ECC_CUSTOM_WORKSPACE_ROOT=$(pwd)/workspace
           echo "Workspace dir: $ECC_CUSTOM_WORKSPACE_ROOT"
           cd compiler/cmd
-          cargo build --release --target ${{matrix.platform.rust_target}}
+          cargo build --release --target x86_64-unknown-linux-gnu
           cd ../..
           mkdir data
-          cp ./compiler/cmd/target/${{matrix.platform.rust_target}}/release/ecc-rs data/ecc
+          cp ./compiler/cmd/target/x86_64-unknown-linux-gnu/release/ecc-rs data/ecc
           cp ./.github/scripts/copy-libs.sh ./data
           ls -lah data
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v2
-      - name: Run ecc-rs and retrieve what libraries it loaded (cross)
-        uses: uraimo/run-on-arch-action@v2
-        if: matrix.platform.is_cross
-        with: 
-          arch: ${{matrix.platform.name}}
-          distro: ubuntu22.04
-          githubToken: ${{ github.token }}
-          install: |
-            apt-get update
-            apt-get install -y libclang1
-          run: |
-            echo "Installation done"
-            echo "Working directory $(pwd)"
-            chmod +x data/ecc
-            echo "Permission set done"
-            chmod +x data/copy-libs.sh
-            data/copy-libs.sh data/ecc
-      - name: Run ecc-rs and retrieve what libraries it loaded (native)
-        if: "!matrix.platform.is_cross"
+      - name: Run ecc-rs and retrieve what libraries it loaded
         run: |
           apt-get update
           apt-get install -y libclang1
@@ -209,17 +151,17 @@ jobs:
       - name: Prepare runtime file and cargo-appimage tool
         uses: eunomia-bpf/prepare-cargo-appimage@v6
         with: 
-          runtime-url: ${{matrix.platform.appimage_runtime}}
+          runtime-url: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-x86_64
       - name: Install libfuse for appimagetool
         run: |
           apt-get update
           apt-get install -y libfuse2
-      - name: Clone and install cargo-appimage with ${{matrix.platform.name}} launcher
+      - name: Clone and install cargo-appimage with x86_64 launcher
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
           git clone https://github.com/eunomia-bpf/cargo-appimage
           cd cargo-appimage
-          ${{matrix.platform.linker_specifier}} RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target ${{matrix.platform.rust_target}}
+          RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target x86_64-unknown-linux-gnu
       - name: Compose files and pack them
         run: |
           mkdir appimage-root
@@ -233,40 +175,15 @@ jobs:
             cp -r ../data/libs/* usr/lib/
           fi
           touch icon.png
-          cp ../cargo-appimage/target/${{matrix.platform.rust_target}}/release/cargo-appimage-runner AppRun
+          cp ../cargo-appimage/target/x86_64-unknown-linux-gnu/release/cargo-appimage-runner AppRun
           cp ../.github/scripts/cargo-appimage.desktop .
-          ../appimagetool --runtime-file ../runtime . ../ecc-${{matrix.platform.name}}
+          ../appimagetool --runtime-file ../runtime . ../ecc-x86_64
       - uses: actions/upload-artifact@v4
         name: Upload build result
         with:
-          name: ecc-${{matrix.platform.name}}
-          path: ecc-${{matrix.platform.name}}
-      - if: matrix.platform.is_cross
-        continue-on-error: true
-        name: Test the binary in a new environment (cross)
-        uses: uraimo/run-on-arch-action@v2
-        with: 
-          arch: ${{matrix.platform.name}}
-          distro: ubuntu22.04
-          githubToken: ${{ github.token }}
-          install: |
-            apt-get update
-            apt-get install -y clang llvm
-          run: |
-            cd /github/workspace
-            chmod +x ecc-${{matrix.platform.name}}
-            mkdir -p /tmp/appimage-mount
-            cd /tmp/appimage-mount
-            /github/workspace/ecc-${{matrix.platform.name}} --appimage-extract >/dev/null 2>&1 || true
-            if [ -f squashfs-root/usr/bin/bin ]; then
-              cd /github/workspace
-              export LD_LIBRARY_PATH=/tmp/appimage-mount/squashfs-root/usr/lib:$LD_LIBRARY_PATH
-              /tmp/appimage-mount/squashfs-root/usr/bin/bin -l llvm-strip .github/assets/simple.bpf.c
-            else
-              echo "AppImage extraction failed, skipping test"
-            fi
-      - name: Test the binary with bundled libraries (native)
-        if: "!matrix.platform.is_cross"
+          name: ecc-x86_64
+          path: ecc-x86_64
+      - name: Test the binary with bundled libraries
         run: |
           apt-get update
           apt-get install -y clang llvm file
@@ -282,8 +199,155 @@ jobs:
             ./data/ecc -l llvm-strip .github/assets/simple.bpf.c
           fi
 
+  build-ecc-binary-aarch64:
+    name: Build ecc on aarch64
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          submodules: 'recursive'
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Install dependencies for cross building
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          aarch64-linux-gnu-gcc --version
+      - name: Prepare bpftool and vmlinux repo for building workspace
+        run: |
+          mkdir workspace
+          mkdir assets
+          cd assets
+          git clone --recursive https://github.com/eunomia-bpf/vmlinux
+          cd vmlinux
+          git checkout 933f83b
+          # Avoid symlink issues
+          rm vmlinux.h
+          cd ..
+          git clone --recursive https://github.com/eunomia-bpf/bpftool
+      - name: Build workspace in aarch64 virtual machine
+        uses: uraimo/run-on-arch-action@v2
+        with: 
+          arch: aarch64
+          distro: ubuntu22.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y zlib1g-dev libelf-dev gcc make
+          run: |
+            mkdir -p workspace/bin
+            cd assets/bpftool/src
+            CFLAGS="-static" make
+            cp bpftool ../../../workspace/bin/
+            ls -lah ../../../workspace/bin/
+      - name: Compose the ecc workspace
+        run: |
+          cd workspace
+          mkdir -p include
+          cp -r ../assets/bpftool/src/libbpf/include/bpf include/
+          cp -r ../assets/vmlinux/ include/
+          cp ./include/vmlinux/arm64/vmlinux.h ./include/vmlinux
+          ls -lah .
+          ls -lah bin/
+      - name: Build ecc for aarch64-unknown-linux-gnu
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup target add aarch64-unknown-linux-gnu
+          export ECC_CUSTOM_WORKSPACE_ROOT=$(pwd)/workspace
+          echo "Workspace dir: $ECC_CUSTOM_WORKSPACE_ROOT"
+          cd compiler/cmd
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --release --target aarch64-unknown-linux-gnu
+          cd ../..
+          mkdir data
+          cp ./compiler/cmd/target/aarch64-unknown-linux-gnu/release/ecc-rs data/ecc
+          cp ./.github/scripts/copy-libs.sh ./data
+          ls -lah data
+      - name: Run ecc-rs and retrieve what libraries it loaded
+        uses: uraimo/run-on-arch-action@v2
+        with: 
+          arch: aarch64
+          distro: ubuntu22.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y libclang1
+          run: |
+            echo "Installation done"
+            echo "Working directory $(pwd)"
+            chmod +x data/ecc
+            echo "Permission set done"
+            chmod +x data/copy-libs.sh
+            data/copy-libs.sh data/ecc
+      - name: Show what libraries were copied
+        run: |
+          find ./data -type f
+          if [ -d ./data/libs ]; then
+            echo "Library dependencies:"
+            ls -lah ./data/libs/
+          fi
+      - name: Prepare runtime file and cargo-appimage tool
+        uses: eunomia-bpf/prepare-cargo-appimage@v6
+        with: 
+          runtime-url: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-aarch64
+      - name: Clone and install cargo-appimage with aarch64 launcher
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          git clone https://github.com/eunomia-bpf/cargo-appimage
+          cd cargo-appimage
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target aarch64-unknown-linux-gnu
+      - name: Compose files and pack them
+        run: |
+          mkdir -p appimage-root/usr/bin
+          mkdir -p appimage-root/usr/lib
+          cp ./data/ecc appimage-root/usr/bin/bin
+          # Copy libraries if they exist
+          if [ -d ./data/libs ]; then
+            cp -r ./data/libs/* appimage-root/usr/lib/
+          fi
+          touch appimage-root/icon.png
+          cp ./cargo-appimage/target/aarch64-unknown-linux-gnu/release/cargo-appimage-runner appimage-root/AppRun
+          cp ./.github/scripts/cargo-appimage.desktop appimage-root/
+          # Download appimagetool
+          sudo apt-get update && sudo apt-get install -y wget file
+          wget https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          # Extract appimagetool to avoid FUSE issues
+          ./appimagetool-x86_64.AppImage --appimage-extract
+          # Use extracted appimagetool
+          ARCH=aarch64 ./squashfs-root/AppRun --runtime-file ./runtime appimage-root ecc-aarch64
+      - uses: actions/upload-artifact@v4
+        name: Upload build result
+        with:
+          name: ecc-aarch64
+          path: ecc-aarch64
+      - continue-on-error: true
+        name: Test the binary in a new environment
+        uses: uraimo/run-on-arch-action@v2
+        with: 
+          arch: aarch64
+          distro: ubuntu22.04
+          githubToken: ${{ github.token }}
+          install: |
+            apt-get update
+            apt-get install -y clang llvm
+          run: |
+            chmod +x ecc-aarch64
+            mkdir -p /tmp/appimage-mount
+            cd /tmp/appimage-mount
+            ${GITHUB_WORKSPACE}/ecc-aarch64 --appimage-extract >/dev/null 2>&1 || true
+            if [ -f squashfs-root/usr/bin/bin ]; then
+              cd ${GITHUB_WORKSPACE}
+              export LD_LIBRARY_PATH=/tmp/appimage-mount/squashfs-root/usr/lib:$LD_LIBRARY_PATH
+              /tmp/appimage-mount/squashfs-root/usr/bin/bin -l llvm-strip .github/assets/simple.bpf.c
+            else
+              echo "AppImage extraction failed, skipping test"
+            fi
+
   release:
-    needs: [create-release-version, build-ecc-binary]
+    needs: [create-release-version, build-ecc-binary-x86, build-ecc-binary-aarch64]
     runs-on: ubuntu-latest
     steps:
       - name: Download build results
