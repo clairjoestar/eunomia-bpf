@@ -224,7 +224,7 @@ jobs:
         run: |
           mkdir appimage-root
           cd appimage-root
-          cp -r ../data/libs/* .
+          cp -r ../data/copy-libs.sh .
           mkdir -p usr/bin
           cp ../data/ecc usr/bin/bin
           touch icon.png
