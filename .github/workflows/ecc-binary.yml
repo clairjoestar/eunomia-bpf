@@ -197,7 +197,7 @@ jobs:
             --volume "${PWD}/output:/data" --privileged
       
       - name: Test the binary in a new environment (native)
-        uses: addnab/docker-run-action@v4
+        uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
           image: ${{matrix.platform.test_env}}
