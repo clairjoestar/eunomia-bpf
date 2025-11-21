@@ -85,8 +85,18 @@ jobs:
             appimage_runtime: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-x86_64
             is_cross: false
     name: Build ecc on ${{matrix.platform.name}}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    container:
+      image: ubuntu:22.04
     steps:
+      - name: Install basic dependencies in container
+        run: |
+          apt-get update
+          apt-get install -y git curl build-essential pkg-config libssl-dev
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Checkout code
         uses: actions/checkout@v3
         with:
@@ -94,11 +104,10 @@ jobs:
       - name: Install dependencies for cross building
         if: matrix.platform.is_cross
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ${{matrix.platform.cross_compiler_package}}
+          apt-get update
+          apt-get install -y ${{matrix.platform.cross_compiler_package}}
           ${{matrix.platform.cross_compiler_executable}} --version
       - name: Prepare bpftool and vmlinux repo for building workspace
-        # Move more steps outside of the virtual machine
         run: |
           mkdir workspace
           mkdir assets
@@ -111,22 +120,15 @@ jobs:
           cd ..
           git clone --recursive https://github.com/eunomia-bpf/bpftool
           cd bpftool
-          # git checkout 0594034
-      - name: Build workspace in docker
-        uses: addnab/docker-run-action@v3
+      - name: Build workspace (native)
         if: "!matrix.platform.is_cross"
-        with:
-          image: ubuntu:22.04
-          run: |
-            apt-get update
-            apt-get install -y zlib1g-dev libelf-dev gcc make
-            cd /workspace && mkdir bin
-            cd /assets/bpftool/src
-            CFLAGS="-static" make
-            cp bpftool /workspace/bin
-          options: |
-            --volume ${{github.workspace}}/workspace:/workspace
-            --volume ${{github.workspace}}/assets:/assets
+        run: |
+          apt-get update
+          apt-get install -y zlib1g-dev libelf-dev gcc make
+          cd workspace && mkdir bin
+          cd ../assets/bpftool/src
+          CFLAGS="-static" make
+          cp bpftool ../../workspace/bin
       - name: Build workspace in ${{matrix.platform.name}} virtual machine
         uses: uraimo/run-on-arch-action@v2
         if: matrix.platform.is_cross
@@ -145,8 +147,6 @@ jobs:
             --volume "${PWD}/assets:/assets"
       - name: Compose the ecc workspace
         run: |
-          sudo chmod 777 workspace -R
-          sudo chown `whoami` workspace -R
           cd workspace
           mkdir include
           cp -r ../assets/bpftool/src/libbpf/include/bpf include/
@@ -154,6 +154,7 @@ jobs:
           cp ./include/vmlinux/${{matrix.platform.vmlinux_dir}}/vmlinux.h ./include/vmlinux
       - name: Build ecc for ${{matrix.platform.rust_target}}
         run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
           rustup target add ${{matrix.platform.rust_target}}
           export ECC_CUSTOM_WORKSPACE_ROOT=$(pwd)/workspace
           echo "Workspace dir: $ECC_CUSTOM_WORKSPACE_ROOT"
@@ -164,11 +165,10 @@ jobs:
           cp ./compiler/cmd/target/${{matrix.platform.rust_target}}/release/ecc-rs data/ecc
           cp ./.github/scripts/copy-libs.sh ./data
           ls -lah data
-      # Necessary if we want to run things cross platform
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v2
-      - name: Run ecc-rs and retrive what libraries it loaded (cross)
+      - name: Run ecc-rs and retrieve what libraries it loaded (cross)
         uses: uraimo/run-on-arch-action@v2
         if: matrix.platform.is_cross
         with: 
@@ -186,37 +186,35 @@ jobs:
           dockerRunArgs: |
             --volume "${PWD}/data:/data"
           shell: /bin/bash
-      - name: Run ecc-rs and retrive what libraries it loaded (native)
-        uses: addnab/docker-run-action@v3
+      - name: Run ecc-rs and retrieve what libraries it loaded (native)
         if: "!matrix.platform.is_cross"
-        with: 
-          image: ubuntu:22.04
-          run: |
-            apt-get update
-            apt-get install -y libclang1
-            echo "Installation done"
-            echo "Working directory $(pwd)"
-            chmod +x /data/ecc
-            echo "Permission set done"
-            chmod +x /data/copy-libs.sh
-            /data/copy-libs.sh /data/ecc
-          options: |
-            --volume ${{github.workspace}}/data:/data
+        run: |
+          apt-get update
+          apt-get install -y libclang1
+          echo "Installation done"
+          echo "Working directory $(pwd)"
+          chmod +x ./data/ecc
+          echo "Permission set done"
+          chmod +x ./data/copy-libs.sh
+          ./data/copy-libs.sh ./data/ecc
       - name: Show what libraries were copied
         run: |
-          sudo chmod 777 ./data -R
-          sudo chown $(whoami) ./data -R
           find ./data -type f
+          if [ -d ./data/libs ]; then
+            echo "Library dependencies:"
+            ls -lah ./data/libs/
+          fi
       - name: Prepare runtime file and cargo-appimage tool
         uses: eunomia-bpf/prepare-cargo-appimage@v6
         with: 
           runtime-url: ${{matrix.platform.appimage_runtime}}
       - name: Install libfuse for appimagetool
         run: |
-          sudo apt-get update
-          sudo apt-get install libfuse2
+          apt-get update
+          apt-get install -y libfuse2
       - name: Clone and install cargo-appimage with ${{matrix.platform.name}} launcher
         run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
           git clone https://github.com/eunomia-bpf/cargo-appimage
           cd cargo-appimage
           ${{matrix.platform.linker_specifier}} RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target ${{matrix.platform.rust_target}}
@@ -227,6 +225,11 @@ jobs:
           cp -r ../data/copy-libs.sh .
           mkdir -p usr/bin
           cp ../data/ecc usr/bin/bin
+          # Copy libraries if they exist
+          if [ -d ../data/libs ]; then
+            mkdir -p usr/lib
+            cp -r ../data/libs/* usr/lib/
+          fi
           touch icon.png
           cp ../cargo-appimage/target/${{matrix.platform.rust_target}}/release/cargo-appimage-runner AppRun
           cp ../.github/scripts/cargo-appimage.desktop .
@@ -237,7 +240,6 @@ jobs:
           name: ecc-${{matrix.platform.name}}
           path: ecc-${{matrix.platform.name}}
       - if: matrix.platform.is_cross
-        # qemu-user doesn't seem to handle statically linked binaries well
         continue-on-error: true
         name: Test the binary in a new environment (cross)
         uses: uraimo/run-on-arch-action@v2
@@ -248,9 +250,7 @@ jobs:
             apt-get update
             apt-get install -y clang llvm
             cd /data
-            # Test using the AppImage root directory
             chmod +x ecc-${{matrix.platform.name}}
-            # Mount and run AppImage
             mkdir -p /tmp/appimage-mount
             cd /tmp/appimage-mount
             /data/ecc-${{matrix.platform.name}} --appimage-extract >/dev/null 2>&1 || true
@@ -264,27 +264,21 @@ jobs:
           dockerRunArgs: |
             --volume "${PWD}:/data" --privileged
       - name: Test the binary with bundled libraries (native)
-        uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
-        with:
-          image: ubuntu:22.04
-          run: |
-            apt-get update
-            apt-get install -y clang llvm file
-            cd /data
-            # Check if libraries were copied
-            if [ -d data/libs ]; then
-              echo "Testing with bundled libraries..."
-              ls -lah data/libs/
-              export LD_LIBRARY_PATH=/data/data/libs:$LD_LIBRARY_PATH
-              ldd /data/data/ecc
-              /data/data/ecc -l llvm-strip .github/assets/simple.bpf.c
-            else
-              echo "No bundled libraries found, testing raw binary..."
-              /data/data/ecc -l llvm-strip .github/assets/simple.bpf.c
-            fi
-          options: |
-            --volume ${{github.workspace}}:/data --privileged
+        run: |
+          apt-get update
+          apt-get install -y clang llvm file
+          echo "Checking binary dependencies..."
+          ldd ./data/ecc || echo "ldd failed, binary might be static"
+          if [ -d ./data/libs ]; then
+            echo "Testing with bundled libraries..."
+            ls -lah ./data/libs/
+            export LD_LIBRARY_PATH=./data/libs:$LD_LIBRARY_PATH
+            ./data/ecc -l llvm-strip .github/assets/simple.bpf.c
+          else
+            echo "No bundled libraries found, testing raw binary..."
+            ./data/ecc -l llvm-strip .github/assets/simple.bpf.c
+          fi
 
   release:
     needs: [create-release-version, build-ecc-binary]
