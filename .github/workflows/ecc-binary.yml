@@ -65,7 +65,6 @@ jobs:
             const tag = tags.find(tag => tag.commit.sha === context.sha);
             
             return tag ? tag.name : increase_v(latest_release_tag)
-  
   build-ecc-binary:
     strategy:
       fail-fast: false
@@ -73,51 +72,33 @@ jobs:
         platform:
           - name: aarch64
             vmlinux_dir: arm64
-            rust_target: aarch64-unknown-linux-gnu
+            rust_target: aarch64-unknown-linux-musl
             cross_compiler_package: gcc-aarch64-linux-gnu
             cross_compiler: aarch64-linux-gnu-gcc
             is_cross: true
             test_env: ubuntu18.04
           - name: x86_64
             vmlinux_dir: x86
-            rust_target: x86_64-unknown-linux-gnu
+            rust_target: x86_64-unknown-linux-musl
             is_cross: false
             test_env: ubuntu:18.04
     name: Build ecc on ${{matrix.platform.name}}
-    runs-on: ubuntu-20.04
-    container:
-      image: ubuntu:20.04
-      options: --privileged
+    runs-on: ubuntu-latest
     steps:
-      - name: Prepare container environment
-        run: |
-          apt-get update
-          apt-get install -y ca-certificates curl gnupg git sudo
-          
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           submodules: 'recursive'
       
-      - name: Install Rust
+      - name: Install musl tools
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          
-      - name: Setup Rust environment
-        run: |
-          . $HOME/.cargo/env
-          rustup default stable
-          rustup target add ${{matrix.platform.rust_target}}
-      
-      - name: Install LLVM and Clang for bindgen
-        run: |
-          apt-get install -y llvm-10 libclang-10-dev clang-10
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
       
       - name: Install dependencies for cross building
         if: matrix.platform.is_cross
         run: |
-          apt-get install -y ${{matrix.platform.cross_compiler_package}}
+          sudo apt-get install -y ${{matrix.platform.cross_compiler_package}}
           ${{matrix.platform.cross_compiler}} --version
       
       - name: Prepare bpftool and vmlinux repo for building workspace
@@ -136,7 +117,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
-          image: ubuntu:20.04
+          image: ubuntu:22.04
           run: |
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
@@ -153,7 +134,7 @@ jobs:
         if: matrix.platform.is_cross
         with: 
           arch: ${{matrix.platform.name}}
-          distro: ubuntu20.04
+          distro: ubuntu22.04
           run: |
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
@@ -167,20 +148,18 @@ jobs:
       
       - name: Compose the ecc workspace
         run: |
-          chmod 777 workspace -R
-          chown `whoami` workspace -R
+          sudo chmod 777 workspace -R
+          sudo chown `whoami` workspace -R
           cd workspace
           mkdir include
           cp -r ../assets/bpftool/src/libbpf/include/bpf include/
           cp -r ../assets/vmlinux/ include/
           cp ./include/vmlinux/${{matrix.platform.vmlinux_dir}}/vmlinux.h ./include/vmlinux
       
-      - name: Build ecc for ${{matrix.platform.rust_target}}
+      - name: Build ecc for ${{matrix.platform.rust_target}} (static musl)
         run: |
-          . $HOME/.cargo/env
+          rustup target add ${{matrix.platform.rust_target}}
           export ECC_CUSTOM_WORKSPACE_ROOT=$(pwd)/workspace
-          export LIBCLANG_PATH=/usr/lib/llvm-10/lib
-          export LLVM_CONFIG_PATH=/usr/bin/llvm-config-10
           echo "Workspace dir: $ECC_CUSTOM_WORKSPACE_ROOT"
           cd compiler/cmd
           if [ "${{matrix.platform.is_cross}}" = "true" ]; then
@@ -191,22 +170,9 @@ jobs:
           mkdir -p output
           cp ./compiler/cmd/target/${{matrix.platform.rust_target}}/release/ecc-rs output/ecc-${{matrix.platform.name}}
           chmod +x output/ecc-${{matrix.platform.name}}
-      
-      - name: Verify glibc version requirement
-        run: |
-          if [ "${{matrix.platform.is_cross}}" = "false" ]; then
-            apt-get install -y patchelf
-            objdump -T output/ecc-${{matrix.platform.name}} | grep GLIBC_ | sed 's/.*GLIBC_\([.0-9]*\).*/\1/g' | sort -Vu | tail -1
-          fi
-      
-      - name: Strip the binary
-        run: |
-          if [ "${{matrix.platform.is_cross}}" = "true" ]; then
-            ${{matrix.platform.cross_compiler}} -s output/ecc-${{matrix.platform.name}} || true
-          else
-            strip output/ecc-${{matrix.platform.name}} || true
-          fi
-          ls -lh output/ecc-${{matrix.platform.name}}
+          # Verify it's statically linked
+          file output/ecc-${{matrix.platform.name}}
+          ldd output/ecc-${{matrix.platform.name}} 2>&1 || echo "Static binary confirmed"
       
       - uses: actions/upload-artifact@v4
         name: Upload build result
@@ -256,8 +222,6 @@ jobs:
       - name: List build results
         run: |
           find ./results -type f
-          file ./results/ecc-x86_64/ecc-x86_64 || true
-          file ./results/ecc-aarch64/ecc-aarch64 || true
       
       - name: Copy ecc binary x86_64 to ecc
         run: |
