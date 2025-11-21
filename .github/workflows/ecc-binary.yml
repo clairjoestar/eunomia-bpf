@@ -6,8 +6,8 @@ on:
       branches: ["*"]
       paths:
         - "ecli/**"
-        - "compiler/**"  # Ensure ecc and ecli releasing at same time
-        - "wasm-rumtime/**"  # Release when dependencies updated
+        - "compiler/**"
+        - "wasm-rumtime/**"
         - "third_party/**"
         - "bpf-loader-rs/**"
         - "eunomia-sdk/**"
@@ -78,12 +78,14 @@ jobs:
             is_cross: true
             cross_compiler_package: gcc-aarch64-linux-gnu
             cross_compiler_executable: aarch64-linux-gnu-gcc
+            ld_linux_pattern: "ld-linux-aarch64.so*"
           - name: x86_64
             vmlinux_dir: x86
             rust_target: x86_64-unknown-linux-gnu
             linker_specifier: 
             appimage_runtime: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-x86_64
             is_cross: false
+            ld_linux_pattern: "ld-linux-x86-64.so*"
     name: Build ecc on ${{matrix.platform.name}}
     runs-on: ubuntu-latest
     steps:
@@ -98,7 +100,6 @@ jobs:
           sudo apt-get install -y ${{matrix.platform.cross_compiler_package}}
           ${{matrix.platform.cross_compiler_executable}} --version
       - name: Prepare bpftool and vmlinux repo for building workspace
-        # Move more steps outside of the virtual machine
         run: |
           mkdir workspace
           mkdir assets
@@ -106,12 +107,10 @@ jobs:
           git clone --recursive https://github.com/eunomia-bpf/vmlinux
           cd vmlinux
           git checkout 933f83b
-          # Avoid symlink issues
           rm vmlinux.h
           cd ..
           git clone --recursive https://github.com/eunomia-bpf/bpftool
           cd bpftool
-          # git checkout 0594034
       - name: Build workspace in docker
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
@@ -163,11 +162,10 @@ jobs:
           mkdir data
           cp ./compiler/cmd/target/${{matrix.platform.rust_target}}/release/ecc-rs data/ecc
           ls -lah data
-      # Necessary if we want to run things cross platform
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v2
-      - name: Run ecc-rs and retrive what libraries it loaded (cross)
+      - name: Run ecc-rs and retrieve libraries (cross)
         uses: uraimo/run-on-arch-action@v2
         if: matrix.platform.is_cross
         with: 
@@ -177,17 +175,15 @@ jobs:
             set -ex
             apt-get update
             apt-get install -y libclang1
-            echo "Installation done"
-            echo "Working directory $(pwd)"
+            
             chmod +x /data/ecc
-            echo "Permission set done"
-            
-            # 直接复制库文件，不依赖外部脚本
             mkdir -p /data/libs
-            echo "Checking dependencies of /data/ecc:"
-            ldd /data/ecc || true
             
-            # 复制动态库
+            echo "=== Copying dynamic linker ==="
+            find /lib -name '${{matrix.platform.ld_linux_pattern}}' -exec cp -v {} /data/libs/ \;
+            find /lib64 -name '${{matrix.platform.ld_linux_pattern}}' -exec cp -v {} /data/libs/ \; 2>/dev/null || true
+            
+            echo "=== Copying shared libraries ==="
             for lib in $(ldd /data/ecc 2>/dev/null | grep "=> /" | awk '{print $3}'); do
               if [ -f "$lib" ]; then
                 echo "Copying $lib"
@@ -195,12 +191,12 @@ jobs:
               fi
             done
             
-            echo "Libraries copied:"
-            ls -lah /data/libs || echo "No libs directory"
+            echo "=== Libraries copied ==="
+            ls -lah /data/libs
           dockerRunArgs: |
             --volume "${PWD}/data:/data"
           shell: /bin/bash
-      - name: Run ecc-rs and retrive what libraries it loaded (native)
+      - name: Run ecc-rs and retrieve libraries (native)
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with: 
@@ -209,17 +205,15 @@ jobs:
             set -ex
             apt-get update
             apt-get install -y libclang1
-            echo "Installation done"
-            echo "Working directory $(pwd)"
+            
             chmod +x /data/ecc
-            echo "Permission set done"
-            
-            # 直接复制库文件，不依赖外部脚本
             mkdir -p /data/libs
-            echo "Checking dependencies of /data/ecc:"
-            ldd /data/ecc || true
             
-            # 复制动态库
+            echo "=== Copying dynamic linker ==="
+            find /lib -name '${{matrix.platform.ld_linux_pattern}}' -exec cp -v {} /data/libs/ \;
+            find /lib64 -name '${{matrix.platform.ld_linux_pattern}}' -exec cp -v {} /data/libs/ \; 2>/dev/null || true
+            
+            echo "=== Copying shared libraries ==="
             for lib in $(ldd /data/ecc 2>/dev/null | grep "=> /" | awk '{print $3}'); do
               if [ -f "$lib" ]; then
                 echo "Copying $lib"
@@ -227,8 +221,8 @@ jobs:
               fi
             done
             
-            echo "Libraries copied:"
-            ls -lah /data/libs || echo "No libs directory"
+            echo "=== Libraries copied ==="
+            ls -lah /data/libs
           options: |
             --volume ${{github.workspace}}/data:/data
       - name: Show what libraries were copied
@@ -241,8 +235,8 @@ jobs:
             echo "Libraries found:"
             find ./data/libs -type f
           else
-            echo "WARNING: No libs directory found - creating empty directory"
-            mkdir -p ./data/libs
+            echo "WARNING: No libs directory found"
+            exit 1
           fi
       - name: Prepare runtime file and cargo-appimage tool
         uses: eunomia-bpf/prepare-cargo-appimage@v6
@@ -261,7 +255,7 @@ jobs:
         run: |
           mkdir appimage-root
           cd appimage-root
-          cp -r ../data/libs/* . || echo "No libs to copy"
+          cp -r ../data/libs/* .
           mkdir -p usr/bin
           cp ../data/ecc usr/bin/bin
           touch icon.png
@@ -274,7 +268,6 @@ jobs:
           name: ecc-${{matrix.platform.name}}
           path: ecc-${{matrix.platform.name}}
       - if: matrix.platform.is_cross
-        # qemu-user doesn't seem to handle statically linked binaries well
         continue-on-error: true
         name: Test the binary in a new environment (cross)
         uses: uraimo/run-on-arch-action@v2
