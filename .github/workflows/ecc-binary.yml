@@ -31,7 +31,7 @@ env:
 jobs:
   create-release-version:
     if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]')"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{steps.set_version.outputs.result}}
     steps:
@@ -85,7 +85,7 @@ jobs:
             appimage_runtime: https://github.com/eunomia-bpf/prepare-cargo-appimage/raw/v6/runtime-x86_64
             is_cross: false
     name: Build ecc on ${{matrix.platform.name}}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -116,7 +116,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
-          image: ubuntu:22.04
+          image: ubuntu:24.04
           run: |
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
@@ -132,7 +132,7 @@ jobs:
         if: matrix.platform.is_cross
         with: 
           arch: ${{matrix.platform.name}}
-          distro: ubuntu22.04
+          distro: ubuntu24.04
           run: |
             apt-get update
             apt-get install -y zlib1g-dev libelf-dev gcc make
@@ -173,7 +173,7 @@ jobs:
         if: matrix.platform.is_cross
         with: 
           arch: ${{matrix.platform.name}}
-          distro: ubuntu22.04
+          distro: ubuntu24.04
           run: |
             apt-get update
             apt-get install -y libclang1
@@ -190,7 +190,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with: 
-          image: ubuntu:22.04
+          image: ubuntu:24.04
           run: |
             apt-get update
             apt-get install -y libclang1
@@ -243,7 +243,7 @@ jobs:
         uses: uraimo/run-on-arch-action@v2
         with: 
           arch: ${{matrix.platform.name}}
-          distro: ubuntu22.04
+          distro: ubuntu24.04
           run: |
             apt-get update
             apt-get install -y clang llvm
@@ -267,7 +267,7 @@ jobs:
         uses: addnab/docker-run-action@v3
         if: "!matrix.platform.is_cross"
         with:
-          image: ubuntu:22.04
+          image: ubuntu:24.04
           run: |
             apt-get update
             apt-get install -y clang llvm file
@@ -288,7 +288,7 @@ jobs:
 
   release:
     needs: [create-release-version, build-ecc-binary]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Download build results
         uses: actions/download-artifact@v4
