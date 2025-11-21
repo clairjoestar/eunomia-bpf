@@ -65,6 +65,7 @@ jobs:
             const tag = tags.find(tag => tag.commit.sha === context.sha);
             
             return tag ? tag.name : increase_v(latest_release_tag)
+  
   build-ecc-binary:
     strategy:
       fail-fast: false
@@ -72,28 +73,28 @@ jobs:
         platform:
           - name: aarch64
             vmlinux_dir: arm64
-            rust_target: aarch64-unknown-linux-musl
+            rust_target: aarch64-unknown-linux-gnu
             cross_compiler_package: gcc-aarch64-linux-gnu
             cross_compiler: aarch64-linux-gnu-gcc
             is_cross: true
             test_env: ubuntu18.04
           - name: x86_64
             vmlinux_dir: x86
-            rust_target: x86_64-unknown-linux-musl
+            rust_target: x86_64-unknown-linux-gnu
             is_cross: false
             test_env: ubuntu:18.04
     name: Build ecc on ${{matrix.platform.name}}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           submodules: 'recursive'
       
-      - name: Install musl tools
+      - name: Install LLVM and Clang for bindgen
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y llvm-14 libclang-14-dev clang-14
       
       - name: Install dependencies for cross building
         if: matrix.platform.is_cross
@@ -156,10 +157,12 @@ jobs:
           cp -r ../assets/vmlinux/ include/
           cp ./include/vmlinux/${{matrix.platform.vmlinux_dir}}/vmlinux.h ./include/vmlinux
       
-      - name: Build ecc for ${{matrix.platform.rust_target}} (static musl)
+      - name: Build ecc for ${{matrix.platform.rust_target}}
         run: |
           rustup target add ${{matrix.platform.rust_target}}
           export ECC_CUSTOM_WORKSPACE_ROOT=$(pwd)/workspace
+          export LIBCLANG_PATH=/usr/lib/llvm-14/lib
+          export LLVM_CONFIG_PATH=/usr/bin/llvm-config-14
           echo "Workspace dir: $ECC_CUSTOM_WORKSPACE_ROOT"
           cd compiler/cmd
           if [ "${{matrix.platform.is_cross}}" = "true" ]; then
@@ -170,9 +173,15 @@ jobs:
           mkdir -p output
           cp ./compiler/cmd/target/${{matrix.platform.rust_target}}/release/ecc-rs output/ecc-${{matrix.platform.name}}
           chmod +x output/ecc-${{matrix.platform.name}}
-          # Verify it's statically linked
-          file output/ecc-${{matrix.platform.name}}
-          ldd output/ecc-${{matrix.platform.name}} 2>&1 || echo "Static binary confirmed"
+      
+      - name: Strip the binary
+        run: |
+          if [ "${{matrix.platform.is_cross}}" = "true" ]; then
+            ${{matrix.platform.cross_compiler}} -s output/ecc-${{matrix.platform.name}} || true
+          else
+            strip output/ecc-${{matrix.platform.name}} || true
+          fi
+          ls -lh output/ecc-${{matrix.platform.name}}
       
       - uses: actions/upload-artifact@v4
         name: Upload build result
@@ -222,6 +231,8 @@ jobs:
       - name: List build results
         run: |
           find ./results -type f
+          file ./results/ecc-x86_64/ecc-x86_64 || true
+          file ./results/ecc-aarch64/ecc-aarch64 || true
       
       - name: Copy ecc binary x86_64 to ecc
         run: |
