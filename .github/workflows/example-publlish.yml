@@ -1,30 +1,48 @@
-name: Deploy examples
-
-on:
-  push:
-    branches: [ master ]
-  workflow_dispatch:
-
 jobs:
   build:
     name: Deploy gh-pages
     runs-on: ubuntu-latest
+    container:
+      image: ubuntu:24.04
     permissions:
       contents: write
       pull-requests: write
       id-token: write
     steps:
+      - name: Install git
+        run: |
+          apt-get update
+          apt-get install -y git
+
       - uses: actions/checkout@v3.3.0
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            curl \
+            build-essential \
+            linux-headers-generic \
+            linux-libc-dev \
+            clang \
+            llvm \
+            libelf-dev \
+            zlib1g-dev \
+            cmake \
+            pkg-config \
+            libssl-dev
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: get submodule
         run: git submodule update --init --recursive --remote
 
       - name: install deps
         run: |
-             sudo make -C ecli install-deps
+             sudo make -C ecli install-deps || make -C ecli install-deps
 
       - name: install test deps
         run: |
