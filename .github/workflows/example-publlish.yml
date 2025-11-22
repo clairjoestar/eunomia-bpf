@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     name: Deploy gh-pages
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04 以保证 libclang-13-dev 可用
     permissions:
       contents: write
       pull-requests: write
@@ -21,6 +21,16 @@ jobs:
 
       - name: get submodule
         run:  git submodule update --init --recursive --remote
+
+      - name: Fix libclang dependencies
+        run: |
+             # 修复 Makefile 中的 libclang 版本依赖
+             if [ -f compiler/Makefile ]; then
+               sed -i 's/libclang-13-dev/libclang-dev/g' compiler/Makefile
+             fi
+             if [ -f ecli/Makefile ]; then
+               sed -i 's/libclang-13-dev/libclang-dev/g' ecli/Makefile
+             fi
 
       - name: install deps
         run: |
