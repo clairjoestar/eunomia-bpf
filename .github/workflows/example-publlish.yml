@@ -20,13 +20,12 @@ jobs:
       - name: Install git and basic tools
         run: |
           apt-get update
-          apt-get install -y git sudo
+          apt-get install -y git sudo ca-certificates wget
 
       - uses: actions/checkout@v3.3.0
       
       - name: Fix git safe directory
         run: |
-          git config --global --add safe.directory /__w/eunomia-bpf/eunomia-bpf
           git config --global --add safe.directory '*'
 
       - name: Install build dependencies
@@ -35,24 +34,30 @@ jobs:
           apt-get install -y \
             curl \
             build-essential \
-            linux-headers-generic \
-            linux-libc-dev \
             clang \
             llvm \
             libelf-dev \
             zlib1g-dev \
             cmake \
             pkg-config \
-            libssl-dev \
-            ca-certificates
+            libssl-dev
+
+      - name: Install newer kernel headers
+        run: |
+          cd /tmp
+          # 下载 6.11 内核头文件
+          wget -q https://kernel.ubuntu.com/mainline/v6.11/amd64/linux-headers-6.11.0-061100_6.11.0-061100.202409151536_all.deb
+          wget -q https://kernel.ubuntu.com/mainline/v6.11/amd64/linux-headers-6.11.0-061100-generic_6.11.0-061100.202409151536_amd64.deb
+          # 安装
+          dpkg -i linux-headers-*.deb || apt-get install -f -y
+          # 验证安装
+          ls -la /usr/src/
+          ls -la /lib/modules/ || true
 
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-          . $HOME/.cargo/env
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          rustc --version
-          cargo --version
 
       - name: get submodule
         run: git submodule update --init --recursive --remote
