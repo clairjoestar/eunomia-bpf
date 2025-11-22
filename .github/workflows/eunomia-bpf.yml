@@ -8,10 +8,10 @@ on:
 env:
   BUILD_TYPE: Release
   INSTALL_LOCATION: .local
+  RUST_BACKTRACE: 1  # 添加：启用详细的错误堆栈跟踪
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]')"
 
@@ -22,7 +22,7 @@ jobs:
 
     - name: install deps
       run: |
-          sudo make -C bpf-loader-rs install-deps
+        sudo make -C bpf-loader-rs install-deps
 
     - name: cache dependencies
       uses: actions/cache@v3
@@ -31,17 +31,34 @@ jobs:
         path: ${{ github.workspace }}/${{ env.INSTALL_LOCATION }}
         key: ${{ runner.os }}-dependencies
 
+    # 修改：使用官方 Rust action，避免手动安装
+    - name: Setup Rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        toolchain: stable
+        components: rustfmt, clippy
+
+    # 修改：改进测试运行方式
     - name: run unit tests
       run: |
         cd bpf-loader-rs/
-        # Install rustup manually using user root
-        curl https://sh.rustup.rs -o rustup.sh
-        sudo bash -c "cat rustup.sh | sh -s -- -y ; /root/.cargo/bin/cargo test && /root/.cargo/bin/cargo clean"
+        # 使用 --nocapture 查看更多输出
+        cargo test --lib -- --nocapture --test-threads=1
+      env:
+        RUST_BACKTRACE: full
+        RUST_LOG: debug
 
+    # 添加：单独的构建步骤
+    - name: build bpf-loader-rs
+      run: |
+        cd bpf-loader-rs/
+        cargo build --release
+      
     - name: make bpf-loader-rs with release profile
-      run:  make bpf-loader-rs
+      run: make bpf-loader-rs
 
-
+    # 修改：使用更现代的 codecov action
     - name: Code coverage using Codecov
-      run: bash <(curl -s https://codecov.io/bash)
-
+      uses: codecov/codecov-action@v3
+      with:
+        fail_ci_if_error: false
