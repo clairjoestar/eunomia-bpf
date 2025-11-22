@@ -5,14 +5,13 @@ on:
     branches: "*"
   pull_request:
     branches: "*"
-
 env:
   BUILD_TYPE: Release
   INSTALL_LOCATION: .local
-  RUST_BACKTRACE: 1
 
 jobs:
   build:
+
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]')"
 
@@ -23,7 +22,7 @@ jobs:
 
     - name: install deps
       run: |
-        sudo make -C bpf-loader-rs install-deps
+          sudo make -C bpf-loader-rs install-deps
 
     - name: cache dependencies
       uses: actions/cache@v3
@@ -32,98 +31,17 @@ jobs:
         path: ${{ github.workspace }}/${{ env.INSTALL_LOCATION }}
         key: ${{ runner.os }}-dependencies
 
-    - name: Setup Rust toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
-      with:
-        toolchain: stable
-
-    # 运行不需要 BPF 权限的测试
-    - name: run unit tests (non-BPF tests only)
+    - name: run unit tests
       run: |
         cd bpf-loader-rs/
-        # 只运行不需要加载 BPF 程序的测试
-        cargo test --lib -- \
-          --skip map_sampling_tests \
-          --skip test_bpf_skeleton_builder \
-          --skip test_load_and_attach \
-          --skip multiple_export_type \
-          --skip test_load_rodata_and_bss \
-          --nocapture \
-          --test-threads=1
-      env:
-        RUST_BACKTRACE: full
-        RUST_LOG: debug
-        RUSTFLAGS: "-A dead_code"
-
-    # 编译所有测试以确保代码可以编译
-    - name: compile all tests
-      run: |
-        cd bpf-loader-rs/
-        cargo test --lib --no-run
-      env:
-        RUSTFLAGS: "-A dead_code"
-
-    # 构建 release 版本
-    - name: build bpf-loader-rs release
-      run: |
-        cd bpf-loader-rs/
-        cargo build --release
-      env:
-        RUSTFLAGS: "-A dead_code"
+        # Install rustup manually using user root
+        curl https://sh.rustup.rs -o rustup.sh
+        sudo bash -c "cat rustup.sh | sh -s -- -y ; /root/.cargo/bin/cargo test && /root/.cargo/bin/cargo clean"
 
     - name: make bpf-loader-rs with release profile
-      run: make bpf-loader-rs
-      env:
-        RUSTFLAGS: "-A dead_code"
+      run:  make bpf-loader-rs
+
 
     - name: Code coverage using Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        fail_ci_if_error: false
-        verbose: true
+      run: bash <(curl -s https://codecov.io/bash)
 
-  # 可选：在支持 BPF 的环境中运行完整测试
-  build-with-bpf:
-    runs-on: ubuntu-latest
-    # 使用容器以获得更好的 BPF 支持
-    container:
-      image: ubuntu:22.04
-      options: --privileged
-    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[ci skip]')"
-    continue-on-error: true  # 允许这个 job 失败而不影响主 build
-    
-    steps:
-    - uses: actions/checkout@v3
-      with:
-        submodules: 'recursive'
-
-    - name: Install dependencies in container
-      run: |
-        apt-get update
-        apt-get install -y curl build-essential git sudo
-        
-    - name: install bpf deps
-      run: |
-        sudo make -C bpf-loader-rs install-deps || true
-
-    - name: Setup Rust in container
-      run: |
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        
-    - name: Setup environment for BPF
-      run: |
-        # 增加内存锁定限制
-        ulimit -l unlimited || true
-        # 确保 BPF 文件系统已挂载
-        mount -t bpf bpf /sys/fs/bpf || true
-
-    - name: run all tests including BPF tests
-      run: |
-        cd bpf-loader-rs/
-        source $HOME/.cargo/env
-        cargo test --lib -- --nocapture --test-threads=1
-      env:
-        RUST_BACKTRACE: full
-        RUSTFLAGS: "-A dead_code"
-      continue-on-error: true
