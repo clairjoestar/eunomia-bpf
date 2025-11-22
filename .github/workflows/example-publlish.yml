@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     name: Deploy gh-pages
-    runs-on: ubuntu-22.04  # 使用 Ubuntu 22.04 以保证 libclang-13-dev 可用
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
       pull-requests: write
@@ -20,33 +20,35 @@ jobs:
           toolchain: stable
 
       - name: get submodule
-        run:  git submodule update --init --recursive --remote
+        run: git submodule update --init --recursive --remote
+
+      - name: Update Linux headers for bpftool compatibility
+        run: |
+             # 安装最新的 Linux 内核头文件以匹配 libbpf 版本
+             sudo apt-get update
+             sudo apt-get install -y linux-headers-$(uname -r) || true
+             sudo apt-get install -y linux-libc-dev
 
       - name: Fix libclang dependencies
         run: |
              # 修复 Makefile 中的 libclang 版本依赖
-             if [ -f compiler/Makefile ]; then
-               sed -i 's/libclang-13-dev/libclang-dev/g' compiler/Makefile
-             fi
-             if [ -f ecli/Makefile ]; then
-               sed -i 's/libclang-13-dev/libclang-dev/g' ecli/Makefile
-             fi
+             find . -name "Makefile" -type f -exec sed -i 's/libclang-13-dev/libclang-dev/g' {} +
 
       - name: install deps
         run: |
              sudo make -C ecli install-deps
 
       - name: install test deps
-        run:  |
+        run: |
               make -C examples/tests install-deps
               make -C examples/tests install-wasm-clang
 
       - name: test build runners
-        run:  |
+        run: |
               make -C examples
 
       - name: test examples
-        run:  |
+        run: |
               SKIP_TESTS=profile make -C examples/tests test
 
       - uses: JamesIves/github-pages-deploy-action@v4.4.1
