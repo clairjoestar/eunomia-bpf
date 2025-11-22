@@ -1,18 +1,26 @@
+name: Deploy examples
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
 jobs:
   build:
     name: Deploy gh-pages
     runs-on: ubuntu-latest
     container:
       image: ubuntu:24.04
+      options: --privileged
     permissions:
       contents: write
       pull-requests: write
       id-token: write
     steps:
-      - name: Install git
+      - name: Install git and basic tools
         run: |
           apt-get update
-          apt-get install -y git
+          apt-get install -y git sudo
 
       - uses: actions/checkout@v3.3.0
       
@@ -30,32 +38,46 @@ jobs:
             zlib1g-dev \
             cmake \
             pkg-config \
-            libssl-dev
+            libssl-dev \
+            ca-certificates
 
       - name: Install Rust
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        env:
+          CARGO_HOME: /root/.cargo
+
+      - name: Load Rust environment
+        run: |
+          . $HOME/.cargo/env
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          rustc --version
+          cargo --version
 
       - name: get submodule
         run: git submodule update --init --recursive --remote
 
       - name: install deps
         run: |
-             sudo make -C ecli install-deps || make -C ecli install-deps
+          export PATH="$HOME/.cargo/bin:$PATH"
+          make -C ecli install-deps
 
       - name: install test deps
         run: |
-              make -C examples/tests install-deps
-              make -C examples/tests install-wasm-clang
+          export PATH="$HOME/.cargo/bin:$PATH"
+          make -C examples/tests install-deps
+          make -C examples/tests install-wasm-clang
 
       - name: test build runners
         run: |
-              make -C examples
+          export PATH="$HOME/.cargo/bin:$PATH"
+          make -C examples
 
       - name: test examples
         run: |
-              SKIP_TESTS=profile make -C examples/tests test
+          export PATH="$HOME/.cargo/bin:$PATH"
+          SKIP_TESTS=profile make -C examples/tests test
 
       - uses: JamesIves/github-pages-deploy-action@v4.4.1
         if: ${{ github.event_name == 'push' }}
