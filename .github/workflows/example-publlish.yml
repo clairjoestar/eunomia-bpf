@@ -44,12 +44,6 @@ jobs:
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-        env:
-          CARGO_HOME: /root/.cargo
-
-      - name: Load Rust environment
-        run: |
           . $HOME/.cargo/env
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           rustc --version
@@ -60,23 +54,23 @@ jobs:
 
       - name: install deps
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
+          . $HOME/.cargo/env
           make -C ecli install-deps
 
       - name: install test deps
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
+          . $HOME/.cargo/env
           make -C examples/tests install-deps
           make -C examples/tests install-wasm-clang
 
       - name: test build runners
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
+          . $HOME/.cargo/env
           make -C examples
 
       - name: test examples
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
+          . $HOME/.cargo/env
           SKIP_TESTS=profile make -C examples/tests test
 
       - uses: JamesIves/github-pages-deploy-action@v4.4.1
