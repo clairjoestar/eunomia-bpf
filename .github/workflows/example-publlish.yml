@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     name: Deploy gh-pages
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -21,18 +21,6 @@ jobs:
 
       - name: get submodule
         run: git submodule update --init --recursive --remote
-
-      - name: Update Linux headers for bpftool compatibility
-        run: |
-             # 安装最新的 Linux 内核头文件以匹配 libbpf 版本
-             sudo apt-get update
-             sudo apt-get install -y linux-headers-$(uname -r) || true
-             sudo apt-get install -y linux-libc-dev
-
-      - name: Fix libclang dependencies
-        run: |
-             # 修复 Makefile 中的 libclang 版本依赖
-             find . -name "Makefile" -type f -exec sed -i 's/libclang-13-dev/libclang-dev/g' {} +
 
       - name: install deps
         run: |
