@@ -20,24 +20,33 @@ jobs:
           toolchain: stable
 
       - name: get submodule
-        run: git submodule update --init --recursive --remote
+        run: git submodule update --init --recursive
+
+      - name: Checkout compatible bpftool version
+        run: |
+          cd third_party/bpftool
+          # Ubuntu 24.04 (noble) 使用内核 6.8
+          # 回退到 bpftool v7.3.0，它与内核 6.8 兼容
+          git fetch --tags
+          git checkout v7.3.0
+          cd ../..
 
       - name: install deps
         run: |
-             sudo make -C ecli install-deps
+          sudo make -C ecli install-deps
 
       - name: install test deps
         run: |
-              make -C examples/tests install-deps
-              make -C examples/tests install-wasm-clang
+          make -C examples/tests install-deps
+          make -C examples/tests install-wasm-clang
 
       - name: test build runners
         run: |
-              make -C examples
+          make -C examples
 
       - name: test examples
         run: |
-              SKIP_TESTS=profile make -C examples/tests test
+          SKIP_TESTS=profile make -C examples/tests test
 
       - uses: JamesIves/github-pages-deploy-action@v4.4.1
         if: ${{ github.event_name == 'push' }}
