@@ -44,7 +44,8 @@ jobs:
             libssl-dev \
             ca-certificates \
             wget \
-            software-properties-common
+            software-properties-common \
+            rsync
 
       - name: Install Rust
         run: |
