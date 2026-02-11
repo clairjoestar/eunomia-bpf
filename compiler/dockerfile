@@ -6,7 +6,7 @@ COPY . /usr/local/src
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
         libelf1 libelf-dev zlib1g-dev libclang-13-dev \
-        make wget curl python2 clang llvm pkg-config build-essential git && \
+        make wget curl python3 clang llvm pkg-config build-essential git && \
     apt-get install -y --no-install-recommends ca-certificates	&& \
 	update-ca-certificates	&& \
     apt-get clean && \
@@ -19,7 +19,7 @@ RUN wget --progress=dot:giga --no-check-certificate \
 	mkdir -p /opt/wasi-sdk/ && \
     mv wasi-sdk-17.0/* /opt/wasi-sdk/
 
-RUN cp /usr/bin/python2 /usr/bin/python
+RUN ln -s /usr/bin/python3 /usr/bin/python
 
 RUN wget -nv -O - https://sh.rustup.rs | sh -s -- -y
 
