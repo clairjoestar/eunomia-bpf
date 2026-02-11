@@ -370,14 +370,17 @@ jobs:
           cp ./results/ecc-x86_64/ecc-x86_64 ./results/ecc-x86_64/ecc
       - name: Publish
         if:   github.event_name == 'push' && github.ref == 'refs/heads/master' && github.repository_owner == 'eunomia-bpf'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
             files: |
               ./results/ecc-x86_64/ecc
               ./results/ecc-x86_64/ecc-x86_64
               ./results/ecc-aarch64/ecc-aarch64
+            draft: false
             prerelease: false
             tag_name: ${{ needs.create-release-version.outputs.version }}
             generate_release_notes: true
+            fail_on_unmatched_files: true
+            make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

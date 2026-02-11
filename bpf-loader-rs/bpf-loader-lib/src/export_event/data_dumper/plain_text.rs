@@ -38,10 +38,21 @@ pub(crate) fn dump_to_string_with_checked_types(
                 member.field_name
             );
         }
+        // Check bounds before accessing the slice
+        let end_offset = offset + member.size;
+        if offset >= data.len() || end_offset > data.len() {
+            bail!(
+                "Invalid offset for member {}: offset={}, size={}, data.len()={}",
+                member.field_name,
+                offset,
+                member.size,
+                data.len()
+            );
+        }
         dump_to_string(
             btf,
             member.type_id,
-            &data[offset..offset + member.size],
+            &data[offset..end_offset],
             out,
         )?;
     }

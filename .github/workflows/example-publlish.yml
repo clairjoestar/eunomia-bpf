@@ -35,8 +35,6 @@ jobs:
           apt-get install -y \
             curl \
             build-essential \
-            linux-headers-generic \
-            linux-libc-dev \
             clang \
             llvm \
             libelf-dev \
@@ -44,7 +42,9 @@ jobs:
             cmake \
             pkg-config \
             libssl-dev \
-            ca-certificates
+            ca-certificates \
+            wget \
+            software-properties-common
 
       - name: Install Rust
         run: |
@@ -56,6 +56,28 @@ jobs:
 
       - name: get submodule
         run: git submodule update --init --recursive --remote
+
+      - name: Patch bpftool for kernel compatibility (post-submodule)
+        run: |
+          # Patch bpftool's skel_internal.h to be compatible with older kernel headers
+          cd third_party/bpftool/src/libbpf/include/bpf
+
+          if [ -f skel_internal.h ]; then
+            echo "Patching skel_internal.h for kernel 6.8 compatibility..."
+            # Patch the file to skip using unavailable kernel features
+            sed -i 's/offsetofend(union bpf_attr, excl_prog_hash_size)/sizeof(union bpf_attr)/g' skel_internal.h || true
+            sed -i 's/attr\.excl_prog_hash = /\/\/ attr.excl_prog_hash = /g' skel_internal.h || true
+            sed -i 's/attr\.excl_prog_hash_size = /\/\/ attr.excl_prog_hash_size = /g' skel_internal.h || true
+            sed -i 's/info\.hash = /\/\/ info.hash = /g' skel_internal.h || true
+            sed -i 's/info\.hash_size = /\/\/ info.hash_size = /g' skel_internal.h || true
+            sed -i 's/offsetofend(union bpf_attr, keyring_id)/sizeof(union bpf_attr)/g' skel_internal.h || true
+            sed -i 's/attr\.signature = /\/\/ attr.signature = /g' skel_internal.h || true
+            sed -i 's/attr\.signature_size = /\/\/ attr.signature_size = /g' skel_internal.h || true
+            sed -i 's/attr\.keyring_id = /\/\/ attr.keyring_id = /g' skel_internal.h || true
+            echo "Patch applied successfully"
+          else
+            echo "Warning: skel_internal.h not found"
+          fi
 
       - name: install deps
         run: |
