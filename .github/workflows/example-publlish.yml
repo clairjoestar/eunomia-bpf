@@ -57,38 +57,49 @@ jobs:
       - name: get submodule
         run: git submodule update --init --recursive --remote
 
-      - name: Patch bpftool for kernel compatibility (post-submodule)
+      - name: install deps and build with kernel compatibility patch
         run: |
-          # Patch bpftool's skel_internal.h to be compatible with older kernel headers
-          cd third_party/bpftool/src/libbpf/include/bpf
-
-          if [ -f skel_internal.h ]; then
-            echo "Patching skel_internal.h for kernel 6.8 compatibility..."
-            # Patch the file to skip using unavailable kernel features
-            sed -i 's/offsetofend(union bpf_attr, excl_prog_hash_size)/sizeof(union bpf_attr)/g' skel_internal.h || true
-            sed -i 's/attr\.excl_prog_hash = /\/\/ attr.excl_prog_hash = /g' skel_internal.h || true
-            sed -i 's/attr\.excl_prog_hash_size = /\/\/ attr.excl_prog_hash_size = /g' skel_internal.h || true
-            sed -i 's/info\.hash = /\/\/ info.hash = /g' skel_internal.h || true
-            sed -i 's/info\.hash_size = /\/\/ info.hash_size = /g' skel_internal.h || true
-            sed -i 's/offsetofend(union bpf_attr, keyring_id)/sizeof(union bpf_attr)/g' skel_internal.h || true
-            sed -i 's/attr\.signature = /\/\/ attr.signature = /g' skel_internal.h || true
-            sed -i 's/attr\.signature_size = /\/\/ attr.signature_size = /g' skel_internal.h || true
-            sed -i 's/attr\.keyring_id = /\/\/ attr.keyring_id = /g' skel_internal.h || true
-            echo "Patch applied successfully"
-          else
-            echo "Warning: skel_internal.h not found"
-          fi
-
-      - name: install deps
-        run: |
+          set -e
           . $HOME/.cargo/env
+
+          echo "=== Installing dependencies ==="
+          make -C compiler install-deps
           make -C ecli install-deps
 
-      - name: install test deps
-        run: |
-          . $HOME/.cargo/env
-          make -C examples/tests install-deps
+          echo "=== Applying kernel 6.8 compatibility patch to libbpf ==="
+          LIBBPF_SKEL="third_party/bpftool/src/libbpf/src/skel_internal.h"
+          if [ -f "$LIBBPF_SKEL" ]; then
+            echo "Patching $LIBBPF_SKEL for Ubuntu 24.04 (kernel 6.8)..."
+            # Comment out code using kernel features only available in 6.12+
+            sed -i 's/offsetofend(union bpf_attr, excl_prog_hash_size)/sizeof(union bpf_attr)/g' "$LIBBPF_SKEL"
+            sed -i 's/attr\.excl_prog_hash = /\/\/ attr.excl_prog_hash = /g' "$LIBBPF_SKEL"
+            sed -i 's/attr\.excl_prog_hash_size = /\/\/ attr.excl_prog_hash_size = /g' "$LIBBPF_SKEL"
+            sed -i 's/info\.hash = /\/\/ info.hash = /g' "$LIBBPF_SKEL"
+            sed -i 's/info\.hash_size = /\/\/ info.hash_size = /g' "$LIBBPF_SKEL"
+            sed -i 's/offsetofend(union bpf_attr, keyring_id)/sizeof(union bpf_attr)/g' "$LIBBPF_SKEL"
+            sed -i 's/attr\.signature = /\/\/ attr.signature = /g' "$LIBBPF_SKEL"
+            sed -i 's/attr\.signature_size = /\/\/ attr.signature_size = /g' "$LIBBPF_SKEL"
+            sed -i 's/attr\.keyring_id = /\/\/ attr.keyring_id = /g' "$LIBBPF_SKEL"
+            echo "✓ Patch applied successfully"
+          else
+            echo "ERROR: $LIBBPF_SKEL not found!"
+            echo "Directory contents:"
+            ls -la third_party/bpftool/src/libbpf/src/ | head -20 || true
+            exit 1
+          fi
+
+          echo "=== Building compiler (includes bpftool) ==="
+          make -C compiler
+          make -C compiler install
+
+          echo "=== Building ecli ==="
+          make -C ecli install
+          cp ecli/target/release/ecli-rs examples/tests/ecli
+
+          echo "=== Installing wasm clang ==="
           make -C examples/tests install-wasm-clang
+
+          echo "✓ All dependencies installed and built successfully"
 
       - name: test build runners
         run: |
