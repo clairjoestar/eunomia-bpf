@@ -90,6 +90,7 @@ jobs:
             sed -i 's/offsetofend(union bpf_attr, excl_prog_hash_size)/sizeof(union bpf_attr)/g' "$SKEL_FILE"
             sed -i 's/\([[:space:]]*\)attr\.excl_prog_hash = /\1\/\/ attr.excl_prog_hash = /g' "$SKEL_FILE"
             sed -i 's/\([[:space:]]*\)attr\.excl_prog_hash_size = /\1\/\/ attr.excl_prog_hash_size = /g' "$SKEL_FILE"
+            sed -i 's/\([[:space:]]*\)__u8 sha\[SHA256_DIGEST_LENGTH\];/\1\/\/ __u8 sha[SHA256_DIGEST_LENGTH];/g' "$SKEL_FILE"
             sed -i 's/\([[:space:]]*\)info\.hash = /\1\/\/ info.hash = /g' "$SKEL_FILE"
             sed -i 's/\([[:space:]]*\)info\.hash_size = /\1\/\/ info.hash_size = /g' "$SKEL_FILE"
             sed -i 's/offsetofend(union bpf_attr, keyring_id)/sizeof(union bpf_attr)/g' "$SKEL_FILE"
